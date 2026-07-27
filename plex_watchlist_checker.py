@@ -1209,7 +1209,7 @@ def generate_html_report(missing_items, unwatched_not_watchlist, total_watchlist
                     }} else {{
                         primaryLink = item.plex_link;
                         primaryBtnText = 'Watch Now';
-                        secondaryLink = `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F${{item.guid.rsplit('/', 1)[-1]}}`;
+                        secondaryLink = `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F${{item.guid.split('/').pop()}}`;
                         secondaryBtnText = 'Discover';
 
                         if (item.type === 'movie') {{
