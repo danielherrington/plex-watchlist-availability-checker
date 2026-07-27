@@ -1,0 +1,12 @@
+# Plex Watchlist Checker gitignore
+
+# Private configuration containing Plex token
+.plex_config.json
+
+# Local Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# Local generated dashboard
+missing_watchlist.html
