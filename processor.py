@@ -333,6 +333,7 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None, 
         
         # Determine watched count
         v_count = show.get('viewed_episodes', 0)
+        t_eps = show.get('total_episodes', 0)
         
         next_ep_metadata = None
         status = "completed"
@@ -350,6 +351,7 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None, 
             # Filter out specials (Season 0)
             episodes = [ep for ep in tvmaze_data['_embedded']['episodes'] if ep.get('season', 0) > 0]
             episodes = sorted(episodes, key=lambda x: (x.get('season', 0), x.get('number', 0)))
+            t_eps = len(episodes)
             
             last_watched_season = episodes[v_count - 1].get('season', 1) if (v_count > 0 and v_count - 1 < len(episodes)) else 1
             
@@ -453,7 +455,7 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None, 
                 'type': 'show',
                 'ratingKey': show['ratingKey'],
                 'viewed_episodes': show['viewed_episodes'],
-                'total_episodes': show['total_episodes'],
+                'total_episodes': t_eps,
                 'poster_url': show['poster_url'],
                 'status': status,
                 'status_label': status_label,
