@@ -726,6 +726,7 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id):
             tv_schedule_list.append({
                 'title': title,
                 'type': 'show',
+                'ratingKey': show['ratingKey'],
                 'viewed_episodes': show['viewed_episodes'],
                 'total_episodes': show['total_episodes'],
                 'poster_url': show['poster_url'],
@@ -1561,7 +1562,7 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
         }}
 
         function ignoreShow(ratingKey, title) {{
-            const key = ratingKey || title.toLowerCase();
+            const key = (ratingKey && ratingKey !== 'undefined') ? ratingKey : title.toLowerCase();
             if (!localIgnored.includes(key)) {{
                 localIgnored.push(key);
                 localStorage.setItem('plex_ignored_shows', JSON.stringify(localIgnored));
