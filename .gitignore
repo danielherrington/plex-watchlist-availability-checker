@@ -13,3 +13,6 @@ missing_watchlist.html
 
 # Compiled macOS App
 *.app/
+
+# TVmaze API Cache
+.tvmaze_cache.json
