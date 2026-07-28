@@ -41,7 +41,7 @@ def api_dashboard():
 @app.post("/api/ignore")
 def api_ignore(payload: ItemPayload):
     ignored = load_ignored_shows()
-    key = payload.ratingKey or payload.title
+    key = payload.title or payload.ratingKey
     if key:
         key_lower = key.lower()
         if key_lower not in [x.lower() for x in ignored]:

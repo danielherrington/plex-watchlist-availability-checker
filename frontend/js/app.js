@@ -36,12 +36,16 @@ function isItemInQueue(item) {
 function isShowIgnored(item) {
     if (item.type !== 'show') return false;
     const title = item.title.toLowerCase();
-    return ignoredBackend.includes(title) || ignoredBackend.includes(item.ratingKey);
+    const rk = item.ratingKey ? String(item.ratingKey) : '';
+    return ignoredBackend.some(ig => {
+        const igStr = String(ig).toLowerCase();
+        return igStr === title || (rk && igStr === rk);
+    });
 }
 
 async function ignoreShow(ratingKey, title) {
-    const key = ratingKey || title.toLowerCase();
-    if (!ignoredBackend.includes(key)) {
+    const key = title ? title.toLowerCase() : (ratingKey ? String(ratingKey) : '');
+    if (key && !ignoredBackend.includes(key)) {
         ignoredBackend.push(key);
     }
     

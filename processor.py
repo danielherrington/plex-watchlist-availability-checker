@@ -15,7 +15,7 @@ def normalize_title(title):
     title = re.sub(r'\s+', ' ', title).strip()
     return title
 
-def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm):
+def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm, watchlist_shows_norm=None):
     """Fetches local server library, indexes items, and gathers TV show/unwatched history."""
     try:
         plex = plex_server.connect()
@@ -79,6 +79,8 @@ def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm
                     norm_title = normalize_title(item.title)
                     
                     if norm_title in ignored_shows_norm:
+                        continue
+                    if watchlist_shows_norm is not None and norm_title not in watchlist_shows_norm:
                         continue
 
                     if item.guid:
@@ -436,7 +438,7 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None):
             
     return tv_schedule_list
 
-def calculate_movie_sagas(local_titles, machine_id):
+def calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm=None):
     """Loads sagas.json and determines completion stats and next available/missing movies."""
     sagas_data = load_sagas()
     active_sagas = []
@@ -489,32 +491,38 @@ def calculate_movie_sagas(local_titles, machine_id):
         })
         
         if watched_count > 0 and watched_count < total_movies and next_movie:
-            status_label = f"Next up: {next_movie['title']} - " + ("Available to watch" if next_movie['status'] == 'available' else "Missing from server")
-            active_sagas.append({
-                'title': saga_name,
-                'type': 'saga',
-                'viewed_episodes': watched_count,
-                'total_episodes': total_movies,
-                'poster_url': next_movie['poster_url'],
-                'status': next_movie['status'],
-                'status_label': status_label,
-                'plex_link': next_movie['plex_link'],
-                'next_movie': {
-                    'title': next_movie['title'],
-                    'index': next_movie['index']
-                }
-            })
+            if watchlist_movies_norm is None or normalize_title(next_movie['title']) in watchlist_movies_norm:
+                status_label = f"Next up: {next_movie['title']} - " + ("Available to watch" if next_movie['status'] == 'available' else "Missing from server")
+                active_sagas.append({
+                    'title': saga_name,
+                    'type': 'saga',
+                    'viewed_episodes': watched_count,
+                    'total_episodes': total_movies,
+                    'poster_url': next_movie['poster_url'],
+                    'status': next_movie['status'],
+                    'status_label': status_label,
+                    'plex_link': next_movie['plex_link'],
+                    'next_movie': {
+                        'title': next_movie['title'],
+                        'index': next_movie['index']
+                    }
+                })
             
     return active_sagas, all_sagas_progress
 
 def get_dashboard_data(account, server_resource, watch_next_titles, ignored_shows_norm, libtype=None):
     """Executes the complete core analytical flow and returns the compiled dashboard payload."""
+    # 1. Fetch watchlist first
+    watchlist = fetch_watchlist(account, libtype=libtype)
+    watchlist_shows_norm = {normalize_title(item.title) for item in watchlist if item.type == 'show'}
+    watchlist_movies_norm = {normalize_title(item.title) for item in watchlist if item.type == 'movie'}
+
+    # 2. Build local index (only scanning shows that are in the watchlist)
     local_guids, local_titles, unwatched_local_items, in_progress_shows, machine_id = build_local_library_index(
-        server_resource, watch_next_titles, ignored_shows_norm
+        server_resource, watch_next_titles, ignored_shows_norm, watchlist_shows_norm
     )
     
-    watchlist = fetch_watchlist(account, libtype=libtype)
-    
+    # 3. Inject watchlist-only shows
     local_in_progress_titles = {normalize_title(s['title']) for s in in_progress_shows}
     for item in watchlist:
         if item.type == 'show':
@@ -547,18 +555,24 @@ def get_dashboard_data(account, server_resource, watch_next_titles, ignored_show
                     })
                     local_in_progress_titles.add(norm_title)
 
-    # Pre-fetch TVmaze guides concurrently
+    # 4. Pre-fetch TVmaze guides concurrently
     show_titles = [show['title'] for show in in_progress_shows]
     tvmaze_map = fetch_tvmaze_batch(show_titles)
     
+    # 5. Find missing items
     missing_items, total_watchlist = check_watchlist(watchlist, local_guids, local_titles, watch_next_titles)
     
+    # 6. Find unwatched gaps
     wl_guids, wl_titles = index_watchlist(watchlist)
     unwatched_local_gaps = check_unwatched_not_watchlist(unwatched_local_items, wl_guids, wl_titles, machine_id)
     
+    # 7. Trace TV Show next schedules
     tv_schedules = calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=tvmaze_map)
-    active_sagas, sagas_progress = calculate_movie_sagas(local_titles, machine_id)
     
+    # 8. Calculate Movie Sagas progress (filtered to watchlist movies)
+    active_sagas, sagas_progress = calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm)
+    
+    # 9. Combine continue watching queues
     continue_watching = tv_schedules + active_sagas
     
     return {
