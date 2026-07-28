@@ -277,7 +277,7 @@ def index_watchlist(watchlist):
     return wl_guids, wl_titles
 
 def check_unwatched_not_watchlist(unwatched_local_items, wl_guids, wl_titles, machine_id):
-    """Identifies unwatched local server items that are not present in the user's watchlist."""
+    """Identifies unwatched local server items, mapping whether they are in the user's watchlist."""
     unwatched_not_watchlist = []
     
     for item in unwatched_local_items:
@@ -303,21 +303,21 @@ def check_unwatched_not_watchlist(unwatched_local_items, wl_guids, wl_titles, ma
                             is_in_watchlist = True
                             break
                             
-        if not is_in_watchlist:
-            local_link = f"https://app.plex.tv/desktop/#!/server/{machine_id}/details?key=%2Flibrary%2Fmetadata%2F{item['ratingKey']}"
-            
-            unwatched_not_watchlist.append({
-                'title': item['title'],
-                'year': item['year'],
-                'type': item['type'],
-                'ratingKey': item['ratingKey'],
-                'guid': item['guid'],
-                'viewed_episodes': item['viewed_episodes'],
-                'total_episodes': item['total_episodes'],
-                'watch_next': item.get('watch_next', False),
-                'poster_url': item['poster_url'],
-                'plex_link': local_link
-            })
+        local_link = f"https://app.plex.tv/desktop/#!/server/{machine_id}/details?key=%2Flibrary%2Fmetadata%2F{item['ratingKey']}"
+        
+        unwatched_not_watchlist.append({
+            'title': item['title'],
+            'year': item['year'],
+            'type': item['type'],
+            'ratingKey': item['ratingKey'],
+            'guid': item['guid'],
+            'viewed_episodes': item['viewed_episodes'],
+            'total_episodes': item['total_episodes'],
+            'watch_next': item.get('watch_next', False),
+            'poster_url': item['poster_url'],
+            'in_watchlist': is_in_watchlist,
+            'plex_link': local_link
+        })
             
     return unwatched_not_watchlist
 

@@ -348,17 +348,21 @@ function filterAndRender() {
                     primaryBtnText = item.plex_link ? 'Watch Now' : 'Plex Info';
 
                     if (item.type === 'movie') {
+                        const watchlistStar = item.in_watchlist ? `<span class="watchlist-star" style="color: #ffb700; font-weight: bold; margin-left: 6px;" title="In Watchlist">★ Watchlist</span>` : '';
                         metaInfoHTML = `
                             <div class="card-meta">
                                 <span class="year">${item.year || 'N/A'}</span>
+                                ${watchlistStar}
                             </div>
                             <div class="status-badge available">Unwatched Movie</div>
                         `;
                     } else {
                         const percentage = Math.round((item.viewed_episodes / item.total_episodes) * 100);
+                        const watchlistStar = item.in_watchlist ? `<span class="watchlist-star" style="color: #ffb700; font-weight: bold; margin-left: 6px;" title="In Watchlist">★ Watchlist</span>` : '';
                         metaInfoHTML = `
                             <div class="card-meta">
                                 <span class="year">${item.year || 'N/A'}</span>
+                                ${watchlistStar}
                             </div>
                             <div class="progress-container">
                                 <div class="progress-bar">

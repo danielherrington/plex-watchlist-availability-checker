@@ -86,12 +86,18 @@ class TestPlexWatchlistChecker(unittest.TestCase):
             }
         ]
         
-        # Check gaps (should find The Matrix as a gap, since Inception is in watchlist)
+        # Check gaps (should find both Inception and The Matrix, mapping in_watchlist correctly)
         gaps = check_unwatched_not_watchlist(unwatched_items, wl_guids, wl_titles, "mock_server_id")
         
-        self.assertEqual(len(gaps), 1)
-        self.assertEqual(gaps[0]['title'], 'The Matrix')
-        self.assertEqual(gaps[0]['plex_link'], 'https://app.plex.tv/desktop/#!/server/mock_server_id/details?key=%2Flibrary%2Fmetadata%2F456')
+        self.assertEqual(len(gaps), 2)
+        
+        inception_gap = next(g for g in gaps if g['title'] == 'Inception')
+        self.assertTrue(inception_gap['in_watchlist'])
+        self.assertEqual(inception_gap['plex_link'], 'https://app.plex.tv/desktop/#!/server/mock_server_id/details?key=%2Flibrary%2Fmetadata%2F123')
+        
+        matrix_gap = next(g for g in gaps if g['title'] == 'The Matrix')
+        self.assertFalse(matrix_gap['in_watchlist'])
+        self.assertEqual(matrix_gap['plex_link'], 'https://app.plex.tv/desktop/#!/server/mock_server_id/details?key=%2Flibrary%2Fmetadata%2F456')
 
     @patch('processor.load_sagas')
     def test_calculate_movie_sagas(self, mock_load_sagas):
