@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
@@ -9,7 +9,7 @@ from config_manager import (
     load_ignored_shows, save_ignored_shows
 )
 from plex_client import authenticate_plex, select_server
-from processor import get_dashboard_data, normalize_title
+from processor import get_dashboard_data, normalize_title, sync_watch_next_to_plex
 
 app = FastAPI(title="Plex Media Hub API Server")
 
@@ -54,23 +54,36 @@ def api_unignore_all():
     save_ignored_shows([])
     return {"status": "ok"}
 
+def run_background_sync(queue):
+    """Asynchronous background wrapper for Plex playlist sync."""
+    try:
+        account = authenticate_plex()
+        server_resource = select_server(account)
+        sync_watch_next_to_plex(server_resource, queue)
+    except Exception as e:
+        print(f"Background sync error: {e}")
+
 @app.post("/api/queue")
-def api_queue(payload: ItemPayload):
+def api_queue(payload: ItemPayload, background_tasks: BackgroundTasks):
     queue = load_watch_next()
     key = payload.ratingKey or payload.title
     if key:
         if key not in queue:
             queue.append(key)
             save_watch_next(queue)
+            # Run Plex sync in the background
+            background_tasks.add_task(run_background_sync, queue)
     return {"status": "ok"}
 
 @app.post("/api/unqueue")
-def api_unqueue(payload: ItemPayload):
+def api_unqueue(payload: ItemPayload, background_tasks: BackgroundTasks):
     queue = load_watch_next()
     key = payload.ratingKey or payload.title
     if key and key in queue:
         queue.remove(key)
         save_watch_next(queue)
+        # Run Plex sync in the background
+        background_tasks.add_task(run_background_sync, queue)
     return {"status": "ok"}
 
 # Mount frontend directory to serve HTML, CSS, and JS static assets

@@ -583,3 +583,43 @@ def get_dashboard_data(account, server_resource, watch_next_titles, ignored_show
         'unwatched_local_gaps': unwatched_local_gaps,
         'sagas_progress': sagas_progress
     }
+
+def sync_watch_next_to_plex(server_resource, watch_next_titles):
+    """Syncs watch_next queue items to a Plex playlist in the correct order."""
+    playlist_title = "Hub - Watch Next"
+    try:
+        print("Syncing Watch Next queue to Plex Server Playlist...")
+        plex = server_resource.connect()
+        
+        items = []
+        for key in watch_next_titles:
+            try:
+                # ratingKey can be integer or string representing integer
+                item = plex.fetchItem(int(key))
+                items.append(item)
+            except Exception:
+                # If ratingKey is a show title (fallback), we can search for the show
+                try:
+                    search_results = plex.search(key)
+                    if search_results:
+                        items.append(search_results[0])
+                except Exception:
+                    pass
+                    
+        # Find and delete existing playlist if it exists
+        try:
+            playlists = plex.playlists()
+            for p in playlists:
+                if p.title == playlist_title:
+                    p.delete()
+                    break
+        except Exception as e:
+            print(f"Warning: Failed to scan or delete existing playlist: {e}")
+            
+        if items:
+            plex.createPlaylist(playlist_title, items=items)
+            print(f"Successfully synced {len(items)} items to Playlist '{playlist_title}'.")
+        else:
+            print("No items in Watch Next queue; playlist cleared.")
+    except Exception as e:
+        print(f"Error syncing Watch Next queue to Plex: {e}")
