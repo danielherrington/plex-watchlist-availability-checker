@@ -1561,10 +1561,10 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
             return ignoredBackend.includes(normTitle) || localIgnored.includes(normTitle) || localIgnored.includes(item.ratingKey);
         }}
 
-        function ignoreShow(ratingKey, title) {{
-            const key = (ratingKey && ratingKey !== 'undefined') ? ratingKey : title.toLowerCase();
-            if (!localIgnored.includes(key)) {{
-                localIgnored.push(key);
+        function ignoreShow(ratingKey) {{
+            if (!ratingKey || ratingKey === 'undefined') return;
+            if (!localIgnored.includes(ratingKey)) {{
+                localIgnored.push(ratingKey);
                 localStorage.setItem('plex_ignored_shows', JSON.stringify(localIgnored));
             }}
             updateCounts();
@@ -1901,7 +1901,7 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
                     // Choose discover link or ignore button for the secondary action
                     let secondaryActionHTML = '';
                     if (showIgnoreBtn) {{
-                        secondaryActionHTML = `<button class="btn btn-ignore" onclick="ignoreShow('${{item.ratingKey}}', '${{item.title.replace(/'/g, "\\'")}}')">Ignore</button>`;
+                        secondaryActionHTML = `<button class="btn btn-ignore" onclick="ignoreShow('${{item.ratingKey}}')">Ignore</button>`;
                     }} else {{
                         const discLink = `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F${{item.guid ? item.guid.split('/').pop() : ''}}`;
                         secondaryActionHTML = `<a href="${{discLink}}" target="_blank" class="btn btn-secondary">Discover</a>`;
@@ -1924,7 +1924,7 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
                             <div class="actions">
                                 ${{activeTab !== 'sagas' ? `<a href="${{primaryLink}}" target="_blank" class="btn btn-primary">${{primaryBtnText}}</a>` : ''}}
                                 ${{showQueueBtn ? `
-                                    <button class="btn btn-queue ${{inQueue ? 'active' : ''}}" onclick="toggleQueue('${{item.ratingKey}}', '${{item.title.replace(/'/g, "\\'")}}'')" title="${{inQueue ? 'Remove from Queue' : 'Add to Watch Next'}}">
+                                    <button class="btn btn-queue ${{inQueue ? 'active' : ''}}" onclick="toggleQueue('${{item.ratingKey}}', '${{item.title.replace(/'/g, "\\'")}}')" title="${{inQueue ? 'Remove from Queue' : 'Add to Watch Next'}}">
                                         ${{inQueue ? '★' : '☆'}}
                                     </button>
                                 ` : ''}}
