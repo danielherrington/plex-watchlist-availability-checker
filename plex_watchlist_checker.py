@@ -699,18 +699,19 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id):
                 discover_key = show['ratingKey']
                 plex_link = f"https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F{discover_key}"
                 
-        # We now include all shows (even caught_up ones) in Continue Watching for complete tracking
-        tv_schedule_list.append({
-            'title': title,
-            'type': 'show',
-            'viewed_episodes': show['viewed_episodes'],
-            'total_episodes': show['total_episodes'],
-            'poster_url': show['poster_url'],
-            'status': status,
-            'status_label': status_label,
-            'plex_link': plex_link,
-            'next_episode': next_ep_metadata
-        })
+        # Only include shows that are not fully caught up in Continue Watching
+        if status != "caught_up":
+            tv_schedule_list.append({
+                'title': title,
+                'type': 'show',
+                'viewed_episodes': show['viewed_episodes'],
+                'total_episodes': show['total_episodes'],
+                'poster_url': show['poster_url'],
+                'status': status,
+                'status_label': status_label,
+                'plex_link': plex_link,
+                'next_episode': next_ep_metadata
+            })
             
     return tv_schedule_list
 
