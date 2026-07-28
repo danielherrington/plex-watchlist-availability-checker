@@ -15,7 +15,7 @@ def normalize_title(title):
     title = re.sub(r'\s+', ' ', title).strip()
     return title
 
-def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm, watchlist_shows_norm=None):
+def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm, watchlist_shows_norm=None, watchlist_progress=None):
     """Fetches local server library, indexes items, and gathers TV show/unwatched history."""
     try:
         plex = plex_server.connect()
@@ -27,6 +27,7 @@ def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm
     local_titles = {}
     unwatched_local_items = []
     in_progress_shows = []
+    local_episodes_inventory = {}
     
     wn_norm = {normalize_title(t) for t in watch_next_titles}
 
@@ -101,8 +102,28 @@ def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm
                             'poster_url': item.thumbUrl if hasattr(item, 'thumbUrl') else ""
                         })
 
+                    # Fetch local episodes inventory
+                    episodes = []
+                    try:
+                        episodes = item.episodes()
+                        episodes = sorted(episodes, key=lambda x: (x.parentIndex or 0, x.index or 0))
+                        local_episodes_inventory[norm_title] = [
+                            {
+                                'season': ep.parentIndex if ep.parentIndex is not None else 0,
+                                'episode': ep.index if ep.index is not None else 0,
+                                'ratingKey': ep.ratingKey,
+                                'air_date': ep.originallyAvailableAt.strftime('%Y-%m-%d') if ep.originallyAvailableAt else None,
+                                'title': ep.title
+                            }
+                            for ep in episodes
+                        ]
+                    except Exception as e:
+                        print(f"    Warning: Failed to fetch episodes for {item.title}: {e}")
+
                     total_episodes = getattr(item, 'leafCount', 0)
-                    viewed_episodes = getattr(item, 'viewedLeafCount', 0)
+                    local_viewed = getattr(item, 'viewedLeafCount', 0)
+                    global_viewed = watchlist_progress.get(norm_title, 0) if watchlist_progress else 0
+                    viewed_episodes = max(local_viewed, global_viewed)
                     unwatched_count = getattr(item, 'unwatchedLeafCount', 0)
 
                     if unwatched_count > 0 and viewed_episodes == 0:
@@ -120,20 +141,21 @@ def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm
 
                     if viewed_episodes > 0:
                         try:
-                            episodes = item.episodes()
-                            episodes = sorted(episodes, key=lambda x: (x.parentIndex or 0, x.index or 0))
-                            
                             last_watched = None
-                            for ep in episodes:
-                                if getattr(ep, 'isPlayed', False) or getattr(ep, 'viewCount', 0) > 0:
-                                    last_watched = ep
-                                    
+                            if episodes:
+                                for ep in episodes:
+                                    if getattr(ep, 'isPlayed', False) or getattr(ep, 'viewCount', 0) > 0:
+                                        last_watched = ep
+                                        
                             next_ep_local = None
-                            if last_watched:
-                                last_idx = episodes.index(last_watched)
-                                if last_idx + 1 < len(episodes):
-                                    next_ep_local = episodes[last_idx + 1]
-                                    
+                            if last_watched and episodes:
+                                try:
+                                    last_idx = episodes.index(last_watched)
+                                    if last_idx + 1 < len(episodes):
+                                        next_ep_local = episodes[last_idx + 1]
+                                except ValueError:
+                                    pass
+                                        
                             in_progress_shows.append({
                                 'title': item.title,
                                 'last_watched': {
@@ -159,7 +181,7 @@ def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm
             except Exception as e:
                 print(f"    Warning: Failed to scan section '{section.title}': {e}")
                 
-    return local_guids, local_titles, unwatched_local_items, in_progress_shows, machine_id
+    return local_guids, local_titles, unwatched_local_items, in_progress_shows, local_episodes_inventory, machine_id
 
 def check_watchlist(watchlist, local_guids, local_titles, watch_next_titles):
     """Compares watchlist items against local server library to find missing files."""
@@ -299,7 +321,7 @@ def check_unwatched_not_watchlist(unwatched_local_items, wl_guids, wl_titles, ma
             
     return unwatched_not_watchlist
 
-def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None):
+def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None, local_episodes_inventory=None):
     """Integrates TVmaze API to trace next available/missing/upcoming episodes of TV shows."""
     tv_schedule_list = []
     today = datetime.date.today()
@@ -308,7 +330,9 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None):
         title = show['title']
         last_watched = show['last_watched']
         next_ep_local = show['next_ep_local']
-        is_watchlist_only = show.get('is_watchlist_only', False)
+        
+        # Determine watched count
+        v_count = show.get('viewed_episodes', 0)
         
         next_ep_metadata = None
         status = "completed"
@@ -323,30 +347,16 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None):
             tvmaze_data = query_tvmaze(title)
         
         if tvmaze_data and '_embedded' in tvmaze_data and 'episodes' in tvmaze_data['_embedded']:
-            episodes = tvmaze_data['_embedded']['episodes']
+            # Filter out specials (Season 0)
+            episodes = [ep for ep in tvmaze_data['_embedded']['episodes'] if ep.get('season', 0) > 0]
             episodes = sorted(episodes, key=lambda x: (x.get('season', 0), x.get('number', 0)))
             
-            if is_watchlist_only:
-                v_count = show['viewed_episodes']
-                last_watched_season = episodes[v_count - 1].get('season', 1) if v_count > 0 else 1
-            else:
-                last_watched_season = last_watched['season'] if last_watched else 1
-
+            last_watched_season = episodes[v_count - 1].get('season', 1) if (v_count > 0 and v_count - 1 < len(episodes)) else 1
+            
             next_tvmaze_ep = None
-            if is_watchlist_only:
-                v_count = show['viewed_episodes']
-                if v_count < len(episodes):
-                    next_tvmaze_ep = episodes[v_count]
-            else:
-                s_watched = last_watched['season'] if last_watched else 0
-                e_watched = last_watched['episode'] if last_watched else 0
-                for ep in episodes:
-                    ep_season = ep.get('season', 0)
-                    ep_number = ep.get('number', 0)
-                    if (ep_season, ep_number) > (s_watched, e_watched):
-                        next_tvmaze_ep = ep
-                        break
-                    
+            if v_count < len(episodes):
+                next_tvmaze_ep = episodes[v_count]
+                
             if next_tvmaze_ep:
                 ep_season = next_tvmaze_ep['season']
                 ep_number = next_tvmaze_ep['number']
@@ -362,10 +372,23 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None):
                     'ratingKey': show['ratingKey']
                 }
                 
-                if next_ep_local and next_ep_local['season'] == ep_season and next_ep_local['episode'] == ep_number:
+                # Check if next TVmaze episode exists in our local inventory
+                next_ep_local_resolved = None
+                norm_title = normalize_title(title)
+                if local_episodes_inventory and norm_title in local_episodes_inventory:
+                    for ep in local_episodes_inventory[norm_title]:
+                        if ep['season'] == ep_season and ep['episode'] == ep_number:
+                            next_ep_local_resolved = ep
+                            break
+                else:
+                    # Fallback to the next_ep_local pre-calculated on the show object (backward compatible for tests!)
+                    if next_ep_local and next_ep_local['season'] == ep_season and next_ep_local['episode'] == ep_number:
+                        next_ep_local_resolved = next_ep_local
+                
+                if next_ep_local_resolved:
                     status = "available"
                     status_label = f"Episode S{ep_season:02d}E{ep_number:02d} available on server"
-                    plex_link = f"https://app.plex.tv/desktop/#!/server/{machine_id}/details?key=%2Flibrary%2Fmetadata%2F{next_ep_local['ratingKey']}"
+                    plex_link = f"https://app.plex.tv/desktop/#!/server/{machine_id}/details?key=%2Flibrary%2Fmetadata%2F{next_ep_local_resolved['ratingKey']}"
                 else:
                     if airdate_str:
                         try:
@@ -406,15 +429,17 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None):
                 discover_key = show['ratingKey']
                 plex_link = f"https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F{discover_key}"
         else:
-            if next_ep_local:
+            # Fallback when TVmaze data is unavailable
+            next_ep_local_resolved = next_ep_local
+            if next_ep_local_resolved:
                 status = "available"
-                status_label = f"Episode S{next_ep_local['season']:02d}E{next_ep_local['episode']:02d} available"
-                plex_link = f"https://app.plex.tv/desktop/#!/server/{machine_id}/details?key=%2Flibrary%2Fmetadata%2F{next_ep_local['ratingKey']}"
+                status_label = f"Episode S{next_ep_local_resolved['season']:02d}E{next_ep_local_resolved['episode']:02d} available"
+                plex_link = f"https://app.plex.tv/desktop/#!/server/{machine_id}/details?key=%2Flibrary%2Fmetadata%2F{next_ep_local_resolved['ratingKey']}"
                 next_ep_metadata = {
-                    'season': next_ep_local['season'],
-                    'episode': next_ep_local['episode'],
-                    'title': next_ep_local['title'],
-                    'air_date': next_ep_local['air_date']
+                    'season': next_ep_local_resolved['season'],
+                    'episode': next_ep_local_resolved['episode'],
+                    'title': next_ep_local_resolved.get('title', 'TBA'),
+                    'air_date': next_ep_local_resolved.get('air_date')
                 }
             else:
                 status = "caught_up"
@@ -517,9 +542,15 @@ def get_dashboard_data(account, server_resource, watch_next_titles, ignored_show
     watchlist_shows_norm = {normalize_title(item.title) for item in watchlist if item.type == 'show'}
     watchlist_movies_norm = {normalize_title(item.title) for item in watchlist if item.type == 'movie'}
 
+    # Track global progress from watchlist for local shows
+    watchlist_progress = {
+        normalize_title(item.title): getattr(item, 'viewedLeafCount', 0)
+        for item in watchlist if item.type == 'show'
+    }
+
     # 2. Build local index (only scanning shows that are in the watchlist)
-    local_guids, local_titles, unwatched_local_items, in_progress_shows, machine_id = build_local_library_index(
-        server_resource, watch_next_titles, ignored_shows_norm, watchlist_shows_norm
+    local_guids, local_titles, unwatched_local_items, in_progress_shows, local_episodes_inventory, machine_id = build_local_library_index(
+        server_resource, watch_next_titles, ignored_shows_norm, watchlist_shows_norm, watchlist_progress
     )
     
     # 3. Inject watchlist-only shows
@@ -567,7 +598,9 @@ def get_dashboard_data(account, server_resource, watch_next_titles, ignored_show
     unwatched_local_gaps = check_unwatched_not_watchlist(unwatched_local_items, wl_guids, wl_titles, machine_id)
     
     # 7. Trace TV Show next schedules
-    tv_schedules = calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=tvmaze_map)
+    tv_schedules = calculate_tv_show_schedules(
+        in_progress_shows, machine_id, tvmaze_map=tvmaze_map, local_episodes_inventory=local_episodes_inventory
+    )
     
     # 8. Calculate Movie Sagas progress (filtered to watchlist movies)
     active_sagas, sagas_progress = calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm)
