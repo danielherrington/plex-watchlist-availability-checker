@@ -171,7 +171,7 @@ class TestPlexWatchlistChecker(unittest.TestCase):
         
         self.assertEqual(len(tv_schedules), 1)
         self.assertEqual(tv_schedules[0]['title'], "Silo")
-        self.assertEqual(tv_schedules[0]['status'], "upcoming")
+        self.assertEqual(tv_schedules[0]['status'], "mid_season_upcoming")
         self.assertIn("airing on 2026-08-05", tv_schedules[0]['status_label'])
         self.assertEqual(tv_schedules[0]['next_episode']['season'], 1)
         self.assertEqual(tv_schedules[0]['next_episode']['episode'], 2)

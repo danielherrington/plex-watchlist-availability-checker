@@ -581,9 +581,7 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id):
         title = show['title']
         last_watched = show['last_watched']
         next_ep_local = show['next_ep_local']
-        
-        s_watched = last_watched['season'] if last_watched else 0
-        e_watched = last_watched['episode'] if last_watched else 0
+        is_watchlist_only = show.get('is_watchlist_only', False)
         
         next_ep_metadata = None
         status = "completed"
@@ -595,26 +593,44 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id):
         
         if tvmaze_data and '_embedded' in tvmaze_data and 'episodes' in tvmaze_data['_embedded']:
             episodes = tvmaze_data['_embedded']['episodes']
-            # Find next episode chronologically
+            # Sort episodes chronologically
+            episodes = sorted(episodes, key=lambda x: (x.get('season', 0), x.get('number', 0)))
+            
+            # Trace last watched season to detect season transitions
+            if is_watchlist_only:
+                v_count = show['viewed_episodes']
+                last_watched_season = episodes[v_count - 1].get('season', 1) if v_count > 0 else 1
+            else:
+                last_watched_season = last_watched['season'] if last_watched else 1
+
             next_tvmaze_ep = None
-            for ep in episodes:
-                ep_season = ep.get('season', 0)
-                ep_number = ep.get('number', 0)
-                if (ep_season, ep_number) > (s_watched, e_watched):
-                    next_tvmaze_ep = ep
-                    break
+            if is_watchlist_only:
+                v_count = show['viewed_episodes']
+                if v_count < len(episodes):
+                    next_tvmaze_ep = episodes[v_count]
+            else:
+                s_watched = last_watched['season'] if last_watched else 0
+                e_watched = last_watched['episode'] if last_watched else 0
+                for ep in episodes:
+                    ep_season = ep.get('season', 0)
+                    ep_number = ep.get('number', 0)
+                    if (ep_season, ep_number) > (s_watched, e_watched):
+                        next_tvmaze_ep = ep
+                        break
                     
             if next_tvmaze_ep:
                 ep_season = next_tvmaze_ep['season']
                 ep_number = next_tvmaze_ep['number']
                 ep_title = next_tvmaze_ep.get('name', 'TBA')
                 airdate_str = next_tvmaze_ep.get('airdate')
+                is_new_season = ep_season > last_watched_season
                 
                 next_ep_metadata = {
                     'season': ep_season,
                     'episode': ep_number,
                     'title': ep_title,
-                    'air_date': airdate_str
+                    'air_date': airdate_str,
+                    'ratingKey': show['ratingKey']
                 }
                 
                 # Compare availability against local server
@@ -630,20 +646,41 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id):
                             air_date = datetime.datetime.strptime(airdate_str, '%Y-%m-%d').date()
                             if air_date > today:
                                 days_away = (air_date - today).days
-                                status = "upcoming"
-                                if days_away == 1:
-                                    status_label = f"S{ep_season:02d}E{ep_number:02d} airing tomorrow"
+                                if is_new_season:
+                                    status = "new_season_upcoming"
+                                    if days_away == 1:
+                                        status_label = f"New Season {ep_season:02d} starts tomorrow!"
+                                    else:
+                                        status_label = f"New Season {ep_season:02d} starts on {airdate_str} (in {days_away} days)"
                                 else:
-                                    status_label = f"S{ep_season:02d}E{ep_number:02d} airing on {airdate_str} (in {days_away} days)"
+                                    status = "mid_season_upcoming"
+                                    if days_away == 1:
+                                        status_label = f"S{ep_season:02d}E{ep_number:02d} airing tomorrow"
+                                    else:
+                                        status_label = f"S{ep_season:02d}E{ep_number:02d} airing on {airdate_str} (in {days_away} days)"
                             else:
-                                status = "missing"
-                                status_label = f"S{ep_season:02d}E{ep_number:02d} aired on {airdate_str} (Missing from server)"
+                                if is_new_season:
+                                    status = "new_season_missing"
+                                    status_label = f"New Season S{ep_season:02d} released! (Missing from server)"
+                                else:
+                                    status = "missing"
+                                    status_label = f"S{ep_season:02d}E{ep_number:02d} aired on {airdate_str} (Missing from server)"
                         except Exception:
                             status = "missing"
                             status_label = f"S{ep_season:02d}E{ep_number:02d} (Missing from server)"
                     else:
                         status = "missing"
                         status_label = f"S{ep_season:02d}E{ep_number:02d} (Airing details TBA - Missing)"
+                    
+                    # Generate Discover link for watchlist-only shows
+                    discover_key = show['ratingKey']
+                    plex_link = f"https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F{discover_key}"
+            else:
+                # All episodes in guide have been watched
+                status = "caught_up"
+                status_label = "All Caught Up (No upcoming episodes)"
+                discover_key = show['ratingKey']
+                plex_link = f"https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F{discover_key}"
         else:
             # Fallback if TVmaze lookup fails: Use local next episode if we have it
             if next_ep_local:
@@ -657,22 +694,23 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id):
                     'air_date': next_ep_local['air_date']
                 }
             else:
-                status = "completed"
-                status_label = "All local episodes watched"
+                status = "caught_up"
+                status_label = "All Caught Up (Schedules offline)"
+                discover_key = show['ratingKey']
+                plex_link = f"https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F{discover_key}"
                 
-        # Do not include completed shows in Continue Watching
-        if status != "completed":
-            tv_schedule_list.append({
-                'title': title,
-                'type': 'show',
-                'viewed_episodes': show['viewed_episodes'],
-                'total_episodes': show['total_episodes'],
-                'poster_url': show['poster_url'],
-                'status': status,
-                'status_label': status_label,
-                'plex_link': plex_link,
-                'next_episode': next_ep_metadata
-            })
+        # We now include all shows (even caught_up ones) in Continue Watching for complete tracking
+        tv_schedule_list.append({
+            'title': title,
+            'type': 'show',
+            'viewed_episodes': show['viewed_episodes'],
+            'total_episodes': show['total_episodes'],
+            'poster_url': show['poster_url'],
+            'status': status,
+            'status_label': status_label,
+            'plex_link': plex_link,
+            'next_episode': next_ep_metadata
+        })
             
     return tv_schedule_list
 
@@ -1213,6 +1251,25 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
             color: var(--upcoming-badge);
             background: rgba(255, 159, 10, 0.1);
             border-color: rgba(255, 159, 10, 0.15);
+        }}
+
+        .status-badge.new_season_upcoming, .status-badge.new_season_missing {{
+            color: var(--upcoming-badge);
+            background: rgba(255, 159, 10, 0.1);
+            border-color: rgba(255, 159, 10, 0.15);
+        }}
+
+        .status-badge.mid_season_upcoming {{
+            color: #d087ff;
+            background: rgba(208, 135, 255, 0.1);
+            border-color: rgba(208, 135, 255, 0.15);
+        }}
+
+        .status-badge.caught_up {{
+            color: var(--show-badge);
+            background: rgba(48, 209, 88, 0.15);
+            border-color: rgba(48, 209, 88, 0.2);
+            font-weight: 700;
         }}
 
         .actions {{
@@ -1849,6 +1906,39 @@ def main():
 
     # 5. Fetch Watchlist
     watchlist = fetch_watchlist(account, libtype=args.type)
+
+    # Identify in-progress shows from the watchlist that are not in local library
+    local_in_progress_titles = {normalize_title(s['title']) for s in in_progress_shows}
+    for item in watchlist:
+        if item.type == 'show':
+            viewed_episodes = getattr(item, 'viewedLeafCount', 0)
+            total_episodes = getattr(item, 'leafCount', 0)
+            if viewed_episodes > 0:
+                norm_title = normalize_title(item.title)
+                if norm_title not in local_in_progress_titles:
+                    poster_url = ""
+                    if hasattr(item, 'thumb') and item.thumb:
+                        if item.thumb.startswith('http'):
+                            poster_url = item.thumb
+                        elif item.thumb.startswith('/'):
+                            poster_url = f"https://metadata.provider.plex.tv{item.thumb}"
+                    elif hasattr(item, 'thumbUrl') and item.thumbUrl:
+                        poster_url = item.thumbUrl
+
+                    rating_key = item.guid.rsplit('/', 1)[-1] if item.guid else ""
+                    
+                    in_progress_shows.append({
+                        'title': item.title,
+                        'last_watched': None,
+                        'next_ep_local': None,
+                        'viewed_episodes': viewed_episodes,
+                        'total_episodes': total_episodes,
+                        'ratingKey': rating_key,
+                        'guid': item.guid,
+                        'poster_url': poster_url,
+                        'is_watchlist_only': True
+                    })
+                    local_in_progress_titles.add(norm_title)
 
     # 6. Cross-reference Watchlist -> Local Library (Finds Missing items)
     missing_items, total_watchlist = check_watchlist(watchlist, local_guids, local_titles, watch_next_titles)
