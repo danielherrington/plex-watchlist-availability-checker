@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Plex Watchlist Checker & GAP Analyzer
-Advanced Media Hub: Tracks Watchlist gaps, Unwatched library gaps, TV Show schedules, Movie Saga progress, and a custom Watch Next Queue.
+Advanced Media Hub: Tracks Watchlist gaps, Unwatched library gaps, TV Show schedules, Movie Saga progress, Watch Next Queue, and Ignored Shows.
 """
 
 import os
@@ -28,6 +28,7 @@ CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".plex_co
 SAGAS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sagas.json")
 TVMAZE_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tvmaze_cache.json")
 WATCH_NEXT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "watch_next.json")
+IGNORED_SHOWS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ignored_shows.json")
 
 def load_config():
     """Loads configuration from the local JSON file."""
@@ -68,6 +69,22 @@ def load_watch_next():
     else:
         try:
             with open(WATCH_NEXT_FILE, "w") as f:
+                json.dump([], f)
+        except Exception:
+            pass
+    return []
+
+def load_ignored_shows():
+    """Loads ignored TV shows from ignored_shows.json, creating it if missing."""
+    if os.path.exists(IGNORED_SHOWS_FILE):
+        try:
+            with open(IGNORED_SHOWS_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Warning: Failed to load ignored_shows file: {e}")
+    else:
+        try:
+            with open(IGNORED_SHOWS_FILE, "w") as f:
                 json.dump([], f)
         except Exception:
             pass
@@ -262,7 +279,7 @@ def normalize_title(title):
     title = re.sub(r'\s+', ' ', title).strip()
     return title
 
-def build_local_library_index(plex_server, watch_next_titles):
+def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm):
     """Fetches local server library, indexes items, and gathers TV show/unwatched history."""
     print(f"\nConnecting to Plex Server: {plex_server.name}...")
     try:
@@ -333,6 +350,12 @@ def build_local_library_index(plex_server, watch_next_titles):
             try:
                 items = section.all(includeGuids=1)
                 for item in items:
+                    norm_title = normalize_title(item.title)
+                    
+                    # Skip permanently ignored shows
+                    if norm_title in ignored_shows_norm:
+                        continue
+
                     if item.guid:
                         local_guids.add(item.guid.lower())
                     if hasattr(item, 'guids') and item.guids:
@@ -340,7 +363,6 @@ def build_local_library_index(plex_server, watch_next_titles):
                             if g.id:
                                 local_guids.add(g.id.lower())
                     
-                    norm_title = normalize_title(item.title)
                     if norm_title:
                         if norm_title not in local_titles:
                             local_titles[norm_title] = []
@@ -792,8 +814,8 @@ def calculate_movie_sagas(local_titles, machine_id):
             
     return active_sagas, all_sagas_progress
 
-def generate_html_report(missing_items, unwatched_local_gaps, continue_watching, sagas_progress, server_name):
-    """Generates a premium glassmorphism dark-mode HTML report with 5 tabs."""
+def generate_html_report(missing_items, unwatched_local_gaps, continue_watching, sagas_progress, ignored_shows, server_name):
+    """Generates a premium glassmorphism dark-mode HTML report with 5 tabs and ignore controls."""
     html_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "missing_watchlist.html")
     
     # Pre-sort lists for injection
@@ -807,6 +829,7 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
     unwatched_json = json.dumps(unwatched_local_gaps)
     continue_watching_json = json.dumps(continue_watching)
     sagas_progress_json = json.dumps(sagas_progress)
+    ignored_json = json.dumps([t.lower() for t in ignored_shows])
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1006,7 +1029,7 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
         .filter-groups {{
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
             flex-wrap: wrap;
         }}
 
@@ -1311,6 +1334,19 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
             background: rgba(255, 255, 255, 0.1);
         }}
 
+        .btn-ignore {{
+            background: rgba(255, 69, 58, 0.05);
+            color: var(--missing-badge);
+            border: 1px solid rgba(255, 69, 58, 0.1);
+            cursor: pointer;
+        }}
+
+        .btn-ignore:hover {{
+            background: rgba(255, 69, 58, 0.15);
+            color: #ff5b52;
+            border-color: rgba(255, 69, 58, 0.25);
+        }}
+
         .btn-queue {{
             background: rgba(255, 255, 255, 0.03);
             color: var(--text-secondary);
@@ -1481,6 +1517,7 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
                     <option id="opt-progress-desc" value="progress-desc" style="display: none;">Watch Progress (Highest)</option>
                     <option id="opt-progress-asc" value="progress-asc" style="display: none;">Watch Progress (Lowest)</option>
                 </select>
+                <button class="btn btn-secondary" onclick="clearIgnored()" style="padding: 0.6rem 1rem; flex: 0;" title="Restore all shows ignored in the browser.">Reset Ignored</button>
             </div>
         </section>
 
@@ -1503,16 +1540,41 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
         const missingItems = {missing_json};
         const unwatchedItems = {unwatched_json};
         const sagasProgress = {sagas_progress_json};
+        const ignoredBackend = {ignored_json};
         
         let activeTab = 'continue';
         let currentFilter = 'all';
         let currentSort = 'title-asc';
 
-        // Load Watch Next browser queue from localStorage
+        // Load lists from localStorage
         let localQueue = JSON.parse(localStorage.getItem('plex_watch_next') || '[]');
+        let localIgnored = JSON.parse(localStorage.getItem('plex_ignored_shows') || '[]');
 
         function isItemInQueue(item) {{
             return item.watch_next || localQueue.includes(item.ratingKey) || localQueue.includes(item.title);
+        }}
+
+        function isShowIgnored(item) {{
+            if (item.type !== 'show') return false;
+            const normTitle = item.title.toLowerCase();
+            return ignoredBackend.includes(normTitle) || localIgnored.includes(normTitle) || localIgnored.includes(item.ratingKey);
+        }}
+
+        function ignoreShow(ratingKey, title) {{
+            const key = ratingKey || title.toLowerCase();
+            if (!localIgnored.includes(key)) {{
+                localIgnored.push(key);
+                localStorage.setItem('plex_ignored_shows', JSON.stringify(localIgnored));
+            }}
+            updateCounts();
+            filterAndRender();
+        }}
+
+        function clearIgnored() {{
+            localIgnored = [];
+            localStorage.removeItem('plex_ignored_shows');
+            updateCounts();
+            filterAndRender();
         }}
 
         function toggleQueue(ratingKey, title) {{
@@ -1530,10 +1592,19 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
         }}
 
         function updateCounts() {{
-            // Count missing & unwatched items in watch next queue
-            const allUnwatched = [...unwatchedItems, ...missingItems];
+            // Recount after ignores & stars
+            const visibleContinue = continueWatching.filter(item => !isShowIgnored(item));
+            document.getElementById('badge-continue').textContent = visibleContinue.length;
+
+            const allUnwatched = [...unwatchedItems, ...missingItems].filter(item => !isShowIgnored(item));
             const watchNextItems = allUnwatched.filter(item => isItemInQueue(item));
             document.getElementById('badge-watchnext').textContent = watchNextItems.length;
+
+            const visibleUnwatched = unwatchedItems.filter(item => !isShowIgnored(item));
+            document.getElementById('badge-unwatched').textContent = visibleUnwatched.length;
+
+            const visibleMissing = missingItems.filter(item => !isShowIgnored(item));
+            document.getElementById('badge-missing').textContent = visibleMissing.length;
         }}
 
         function switchTab(tab) {{
@@ -1618,13 +1689,15 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
             else if (activeTab === 'unwatched') sourceList = unwatchedItems;
             else if (activeTab === 'sagas') sourceList = sagasProgress;
             else if (activeTab === 'watchnext') {{
-                // Union of unwatched & missing that match watch next criteria
                 const allUnwatched = [...unwatchedItems, ...missingItems];
                 sourceList = allUnwatched.filter(item => isItemInQueue(item));
             }}
 
             // 1. Filter
             let filtered = sourceList.filter(item => {{
+                // Filter out ignored shows
+                if (isShowIgnored(item)) return false;
+
                 // Media Type Filter (applicable to everything except Sagas tab)
                 if (activeTab !== 'sagas' && currentFilter !== 'all') {{
                     if (currentFilter === 'movie' && item.type === 'show') return false;
@@ -1700,11 +1773,10 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
 
                     let primaryLink = '#';
                     let primaryBtnText = 'View';
-                    let secondaryLink = '#';
-                    let secondaryBtnText = 'Discover';
                     let metaInfoHTML = '';
                     let badgeClass = item.type;
                     let showQueueBtn = false;
+                    let showIgnoreBtn = false;
                     
                     // Render styling depending on Tab
                     if (activeTab === 'continue') {{
@@ -1716,10 +1788,6 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
                             
                             primaryLink = item.plex_link;
                             primaryBtnText = item.status === 'available' ? 'Watch Now' : 'Plex Info';
-                            
-                            const discoverKey = item.plex_link ? '' : encodeURIComponent(item.next_movie.title);
-                            secondaryLink = item.plex_link ? `https://www.google.com/search?q=${{encodeURIComponent(item.next_movie.title)}}` : `https://www.google.com/search?q=${{discoverKey}}`;
-                            secondaryBtnText = 'Google Info';
 
                             metaInfoHTML = `
                                 <div class="card-meta">
@@ -1735,13 +1803,11 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
                             `;
                         }} else {{
                             // TV Show Continue Watching
+                            showIgnoreBtn = true;
                             const percentage = Math.round((item.viewed_episodes / item.total_episodes) * 100);
                             
                             primaryLink = item.plex_link || `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F${{item.next_episode ? item.next_episode.ratingKey || item.next_episode.title : ''}}`;
                             primaryBtnText = item.status === 'available' ? 'Play S' + item.next_episode.season + 'E' + item.next_episode.episode : 'Info';
-                            
-                            secondaryLink = `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F${{item.next_episode ? item.next_episode.title : ''}}`;
-                            secondaryBtnText = 'Discover';
 
                             const epTitle = item.next_episode ? `"${{item.next_episode.title}}"` : 'TBA';
                             metaInfoHTML = `
@@ -1759,13 +1825,11 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
                         }}
                     }} else if (activeTab === 'missing' || activeTab === 'watchnext' || activeTab === 'unwatched') {{
                         showQueueBtn = true;
-                        const inQueue = isItemInQueue(item);
+                        if (item.type === 'show') showIgnoreBtn = true;
 
                         if (activeTab === 'missing') {{
                             primaryLink = `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F${{item.ratingKey}}`;
                             primaryBtnText = 'Plex Info';
-                            const googleQuery = encodeURIComponent(`${{item.title}} ${{item.year || ''}} ${{typeLabel}}`);
-                            secondaryLink = `https://www.google.com/search?q=${{googleQuery}}`;
                             
                             metaInfoHTML = `
                                 <div class="card-meta">
@@ -1776,11 +1840,8 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
                                 <div class="status-badge missing">Missing from server</div>
                             `;
                         }} else {{
-                            // Unwatched or Watch Next Tab
                             primaryLink = item.plex_link || `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F${{item.ratingKey}}`;
                             primaryBtnText = item.plex_link ? 'Watch Now' : 'Plex Info';
-                            secondaryLink = `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F${{item.guid ? item.guid.split('/').pop() : ''}}`;
-                            secondaryBtnText = 'Discover';
 
                             if (item.type === 'movie') {{
                                 metaInfoHTML = `
@@ -1810,8 +1871,6 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
                         
                         primaryLink = '#';
                         primaryBtnText = 'Progress';
-                        secondaryLink = `https://www.google.com/search?q=${{encodeURIComponent(item.title + ' movie collection')}}`;
-                        secondaryBtnText = 'Google Info';
 
                         metaInfoHTML = `
                             <div class="card-meta">
@@ -1838,6 +1897,15 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
                     const grad = gradients[Math.abs(item.title.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)) % gradients.length];
                     const inQueue = isItemInQueue(item);
 
+                    // Choose discover link or ignore button for the secondary action
+                    let secondaryActionHTML = '';
+                    if (showIgnoreBtn) {{
+                        secondaryActionHTML = `<button class="btn btn-ignore" onclick="ignoreShow('${{item.ratingKey}}', '${{item.title.replace(/'/g, "\\'")}}')">Ignore</button>`;
+                    }} else {{
+                        const discLink = `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F${{item.guid ? item.guid.split('/').pop() : ''}}`;
+                        secondaryActionHTML = `<a href="${{discLink}}" target="_blank" class="btn btn-secondary">Discover</a>`;
+                    }}
+
                     card.innerHTML = `
                         <div class="poster-container">
                             ${{item.poster_url ? `
@@ -1859,7 +1927,7 @@ def generate_html_report(missing_items, unwatched_local_gaps, continue_watching,
                                         ${{inQueue ? '★' : '☆'}}
                                     </button>
                                 ` : ''}}
-                                <a href="${{secondaryLink}}" target="_blank" class="btn btn-secondary">${{secondaryBtnText}}</a>
+                                ${{secondaryActionHTML}}
                             </div>
                         </div>
                     `;
@@ -1899,16 +1967,20 @@ def main():
     # 2. Select server
     server_resource = select_server(account, target_server_name=args.server)
 
-    # 3. Load Watch Next checklist config
+    # 3. Load Watch Next queue config
     watch_next_titles = load_watch_next()
 
-    # 4. Fetch local libraries (GUIDs, Titles, Unwatched and In-Progress)
-    local_guids, local_titles, unwatched_local_items, in_progress_shows, machine_id = build_local_library_index(server_resource, watch_next_titles)
+    # 4. Load Ignored Shows config
+    ignored_shows = load_ignored_shows()
+    ignored_shows_norm = {normalize_title(t) for t in ignored_shows}
 
-    # 5. Fetch Watchlist
+    # 5. Fetch local libraries (GUIDs, Titles, Unwatched and In-Progress)
+    local_guids, local_titles, unwatched_local_items, in_progress_shows, machine_id = build_local_library_index(server_resource, watch_next_titles, ignored_shows_norm)
+
+    # 6. Fetch Watchlist
     watchlist = fetch_watchlist(account, libtype=args.type)
 
-    # Identify in-progress shows from the watchlist that are not in local library
+    # Identify in-progress shows from the watchlist that are not in local library and not ignored
     local_in_progress_titles = {normalize_title(s['title']) for s in in_progress_shows}
     for item in watchlist:
         if item.type == 'show':
@@ -1916,7 +1988,7 @@ def main():
             total_episodes = getattr(item, 'leafCount', 0)
             if viewed_episodes > 0:
                 norm_title = normalize_title(item.title)
-                if norm_title not in local_in_progress_titles:
+                if norm_title not in local_in_progress_titles and norm_title not in ignored_shows_norm:
                     poster_url = ""
                     if hasattr(item, 'thumb') and item.thumb:
                         if item.thumb.startswith('http'):
@@ -1941,23 +2013,23 @@ def main():
                     })
                     local_in_progress_titles.add(norm_title)
 
-    # 6. Cross-reference Watchlist -> Local Library (Finds Missing items)
+    # 7. Cross-reference Watchlist -> Local Library (Finds Missing items)
     missing_items, total_watchlist = check_watchlist(watchlist, local_guids, local_titles, watch_next_titles)
 
-    # 7. Index Watchlist & Cross-reference Local -> Watchlist (Finds Unwatched not in Watchlist)
+    # 8. Index Watchlist & Cross-reference Local -> Watchlist (Finds Unwatched not in Watchlist)
     wl_guids, wl_titles = index_watchlist(watchlist)
     unwatched_local_gaps = check_unwatched_not_watchlist(unwatched_local_items, wl_guids, wl_titles, machine_id)
 
-    # 8. Trace TV Show next episode schedules via TVmaze API
+    # 9. Trace TV Show next episode schedules via TVmaze API
     tv_schedules = calculate_tv_show_schedules(in_progress_shows, machine_id)
 
-    # 9. Calculate Movie Sagas watch progress
+    # 10. Calculate Movie Sagas watch progress
     active_sagas, sagas_progress = calculate_movie_sagas(local_titles, machine_id)
 
     # Combine TV Shows + Movie Sagas into Continue Watching list
     continue_watching = tv_schedules + active_sagas
 
-    # 10. Print Console Summary
+    # 11. Print Console Summary
     print("\n" + "="*60)
     print("                    ANALYSIS SUMMARY")
     print("="*60)
@@ -1969,8 +2041,8 @@ def main():
     print(f"Tracked Movie Sagas:   {len(sagas_progress)}")
     print("="*60)
 
-    # 11. Generate and open HTML Dashboard
-    html_path = generate_html_report(missing_items, unwatched_local_gaps, continue_watching, sagas_progress, server_resource.name)
+    # 12. Generate and open HTML Dashboard
+    html_path = generate_html_report(missing_items, unwatched_local_gaps, continue_watching, sagas_progress, ignored_shows, server_resource.name)
     
     # Auto-open HTML page if not in Docker
     if not os.path.exists('/.dockerenv'):
