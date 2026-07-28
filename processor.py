@@ -537,6 +537,27 @@ def calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm=None):
             
     return active_sagas, all_sagas_progress
 
+def get_accurate_viewed_count(rating_key, token, fallback_viewed):
+    """Queries Plex metadata server children API to calculate true viewed leaf count from season user states."""
+    import urllib.request
+    import xml.etree.ElementTree as ET
+    if not rating_key or rating_key == "nan":
+        return fallback_viewed
+        
+    try:
+        url = f"https://metadata.provider.plex.tv/library/metadata/{rating_key}/children?X-Plex-Token={token}&includeUserState=1"
+        req = urllib.request.Request(url, headers={'Accept': 'application/xml'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            xml_data = response.read()
+        root = ET.fromstring(xml_data)
+        total_viewed = 0
+        for directory in root.findall(".//Directory"):
+            total_viewed += int(directory.attrib.get('viewedLeafCount', 0))
+        return total_viewed
+    except Exception as e:
+        print(f"Warning: Failed to fetch accurate viewed count for show {rating_key}: {e}")
+        return fallback_viewed
+
 def get_dashboard_data(account, server_resource, watch_next_titles, ignored_shows_norm, libtype=None):
     """Executes the complete core analytical flow and returns the compiled dashboard payload."""
     # 1. Fetch watchlist first
@@ -544,11 +565,16 @@ def get_dashboard_data(account, server_resource, watch_next_titles, ignored_show
     watchlist_shows_norm = {normalize_title(item.title) for item in watchlist if item.type == 'show'}
     watchlist_movies_norm = {normalize_title(item.title) for item in watchlist if item.type == 'movie'}
 
-    # Track global progress from watchlist for local shows
-    watchlist_progress = {
-        normalize_title(item.title): getattr(item, 'viewedLeafCount', 0)
-        for item in watchlist if item.type == 'show'
-    }
+    # Track global progress from watchlist for local shows, query accurate count from season levels
+    watchlist_progress = {}
+    for item in watchlist:
+        if item.type == 'show':
+            norm_title = normalize_title(item.title)
+            global_viewed = getattr(item, 'viewedLeafCount', 0)
+            if global_viewed > 0:
+                rating_key = item.guid.rsplit('/', 1)[-1] if item.guid else ""
+                global_viewed = get_accurate_viewed_count(rating_key, account.authToken, global_viewed)
+            watchlist_progress[norm_title] = global_viewed
 
     # 2. Build local index (only scanning shows that are in the watchlist)
     local_guids, local_titles, unwatched_local_items, in_progress_shows, local_episodes_inventory, machine_id = build_local_library_index(
@@ -559,10 +585,10 @@ def get_dashboard_data(account, server_resource, watch_next_titles, ignored_show
     local_in_progress_titles = {normalize_title(s['title']) for s in in_progress_shows}
     for item in watchlist:
         if item.type == 'show':
-            viewed_episodes = getattr(item, 'viewedLeafCount', 0)
+            norm_title = normalize_title(item.title)
+            viewed_episodes = watchlist_progress.get(norm_title, getattr(item, 'viewedLeafCount', 0))
             total_episodes = getattr(item, 'leafCount', 0)
             if viewed_episodes > 0:
-                norm_title = normalize_title(item.title)
                 if norm_title not in local_in_progress_titles and norm_title not in ignored_shows_norm:
                     poster_url = ""
                     if hasattr(item, 'thumb') and item.thumb:
