@@ -31,4 +31,4 @@ if [ -f "requirements.txt" ]; then
 fi
 
 # Run the checker script, passing through any arguments
-python3 plex_watchlist_checker.py "$@"
+python3 app.py "$@"

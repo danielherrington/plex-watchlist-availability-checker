@@ -2,7 +2,7 @@
 import unittest
 from unittest.mock import patch
 import datetime
-from plex_watchlist_checker import (
+from processor import (
     normalize_title,
     check_watchlist,
     index_watchlist,
@@ -93,7 +93,7 @@ class TestPlexWatchlistChecker(unittest.TestCase):
         self.assertEqual(gaps[0]['title'], 'The Matrix')
         self.assertEqual(gaps[0]['plex_link'], 'https://app.plex.tv/desktop/#!/server/mock_server_id/details?key=%2Flibrary%2Fmetadata%2F456')
 
-    @patch('plex_watchlist_checker.load_sagas')
+    @patch('processor.load_sagas')
     def test_calculate_movie_sagas(self, mock_load_sagas):
         # Mock sagas.json content
         mock_load_sagas.return_value = {
@@ -138,7 +138,7 @@ class TestPlexWatchlistChecker(unittest.TestCase):
         self.assertEqual(active_sagas[0]['next_movie']['title'], "From Russia with Love")
         self.assertEqual(active_sagas[0]['plex_link'], "https://app.plex.tv/desktop/#!/server/mock_server_id/details?key=%2Flibrary%2Fmetadata%2F1002")
 
-    @patch('plex_watchlist_checker.query_tvmaze')
+    @patch('processor.query_tvmaze')
     def test_calculate_tv_show_schedules(self, mock_query_tvmaze):
         # Mock TVmaze response
         mock_query_tvmaze.return_value = {

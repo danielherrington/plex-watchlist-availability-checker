@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plex Watchlist & Media Hub Analyzer</title>
+    <!-- Google Fonts Outfit -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="title-area">
+                <h1>Plex Media Hub</h1>
+                <p>Track show release schedules, movie saga progress, and library sync gaps.</p>
+            </div>
+            <div>
+                <div class="server-badge">
+                    <svg style="width: 12px; height: 12px; fill: currentColor;" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                    <span id="server-name-label">Loading Server...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="tabs-container">
+            <button class="tab-btn active" id="tab-continue" onclick="switchTab('continue')">
+                📺 Continue Watching
+                <span class="tab-count" id="badge-continue">0</span>
+            </button>
+            <button class="tab-btn" id="tab-watchnext" onclick="switchTab('watchnext')">
+                ★ Watch Next
+                <span class="tab-count" id="badge-watchnext">0</span>
+            </button>
+            <button class="tab-btn" id="tab-unwatched" onclick="switchTab('unwatched')">
+                📁 Unwatched Library
+                <span class="tab-count" id="badge-unwatched">0</span>
+            </button>
+            <button class="tab-btn" id="tab-missing" onclick="switchTab('missing')">
+                🍿 Watchlist Gaps
+                <span class="tab-count" id="badge-missing">0</span>
+            </button>
+            <button class="tab-btn" id="tab-sagas" onclick="switchTab('sagas')">
+                🏅 Saga Browser
+                <span class="tab-count" id="badge-sagas">0</span>
+            </button>
+        </nav>
+
+        <!-- Controls (Search/Filter/Sort) -->
+        <section class="control-panel">
+            <div class="search-box">
+                <svg viewBox="0 0 24 24">
+                    <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                </svg>
+                <input type="text" id="search-input" placeholder="Search items..." oninput="filterAndRender()">
+            </div>
+            <div class="filter-groups">
+                <div class="filter-group" id="media-filter-group">
+                    <button class="filter-btn active" id="filter-all" onclick="setFilter('all')">All</button>
+                    <button class="filter-btn" id="filter-movie" onclick="setFilter('movie')">Movies</button>
+                    <button class="filter-btn" id="filter-show" onclick="setFilter('show')">TV Shows</button>
+                </div>
+                <select class="sort-select" id="sort-select" onchange="setSort(this.value)">
+                    <option id="opt-added-desc" value="added-desc">Date Added (Newest First)</option>
+                    <option id="opt-added-asc" value="added-asc">Date Added (Oldest First)</option>
+                    <option value="title-asc" selected>Title (A - Z)</option>
+                    <option value="title-desc">Title (Z - A)</option>
+                    <option value="year-desc">Release Year (Newest)</option>
+                    <option value="year-asc">Release Year (Oldest)</option>
+                    <option id="opt-progress-desc" value="progress-desc" style="display: none;">Watch Progress (Highest)</option>
+                    <option id="opt-progress-asc" value="progress-asc" style="display: none;">Watch Progress (Lowest)</option>
+                </select>
+                <button class="btn btn-secondary" onclick="clearIgnored()" style="padding: 0.6rem 1rem; flex: 0;" title="Restore all shows ignored in the browser.">Reset Ignored</button>
+            </div>
+        </section>
+
+        <!-- Items Grid -->
+        <main class="grid" id="items-grid">
+            <!-- Rendered dynamically -->
+        </main>
+
+        <!-- Empty State -->
+        <div class="empty-state" id="empty-state">
+            <div class="empty-icon">🎉</div>
+            <h3>All Caught Up!</h3>
+            <p>No items found.</p>
+        </div>
+    </div>
+
+    <!-- Application Script -->
+    <script src="js/app.js"></script>
+</body>
+</html>
