@@ -482,7 +482,7 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None, 
             
     return tv_schedule_list
 
-def calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm=None, watch_next_titles=None):
+def calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm=None, watch_next_titles=None, ignored_shows_norm=None):
     """Loads sagas.json and determines completion stats and next available/missing movies."""
     sagas_data = load_sagas()
     active_sagas = []
@@ -496,6 +496,9 @@ def calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm=None, 
             wn_norm.add(normalize_title(t_str))
 
     for saga_name, movie_list in sagas_data.items():
+        if ignored_shows_norm and normalize_title(saga_name) in ignored_shows_norm:
+            continue
+            
         total_movies = len(movie_list)
         watched_count = 0
         present_count = 0
@@ -532,6 +535,8 @@ def calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm=None, 
         
         all_sagas_progress.append({
             'title': saga_name,
+            'type': 'saga',
+            'ratingKey': '',
             'watched_movies': watched_count,
             'total_movies': total_movies,
             'percentage': percentage,
@@ -688,7 +693,7 @@ async def get_dashboard_data(account, server_resource, watch_next_titles, ignore
     
     # 8. Calculate Movie Sagas progress (filtered to watchlist movies)
     active_sagas, sagas_progress = await asyncio.to_thread(
-        calculate_movie_sagas, local_titles, machine_id, watchlist_movies_norm, watch_next_titles
+        calculate_movie_sagas, local_titles, machine_id, watchlist_movies_norm, watch_next_titles, ignored_shows_norm
     )
     
     # 9. Combine continue watching queues

@@ -37,7 +37,7 @@ function isItemInQueue(item) {
 }
 
 function isShowIgnored(item) {
-    if (item.type !== 'show') return false;
+    if (item.type !== 'show' && item.type !== 'saga') return false;
     const title = item.title.toLowerCase();
     const rk = item.ratingKey ? String(item.ratingKey) : '';
     return ignoredBackend.some(ig => {
@@ -480,6 +480,7 @@ function filterAndRender() {
                     }
                 }
             } else if (activeTab === 'sagas') {
+                showIgnoreBtn = true;
                 const isComp = item.next_movie_status === 'completed';
                 badgeClass = item.next_movie_status;
                 
