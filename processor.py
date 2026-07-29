@@ -29,7 +29,11 @@ def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm
     in_progress_shows = []
     local_episodes_inventory = {}
     
-    wn_norm = {normalize_title(t) for t in watch_next_titles}
+    wn_norm = set()
+    for t in watch_next_titles:
+        t_str = str(t).strip()
+        wn_norm.add(t_str.lower())
+        wn_norm.add(normalize_title(t_str))
 
     for section in plex.library.sections():
         if section.type == 'movie':
@@ -67,7 +71,7 @@ def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm
                             'guid': item.guid,
                             'viewed_episodes': 0,
                             'total_episodes': 0,
-                            'watch_next': norm_title in wn_norm,
+                            'watch_next': (norm_title in wn_norm) or (item.ratingKey and str(item.ratingKey).lower() in wn_norm),
                             'poster_url': item.thumbUrl if hasattr(item, 'thumbUrl') else ""
                         })
             except Exception as e:
@@ -135,7 +139,7 @@ def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm
                             'guid': item.guid,
                             'viewed_episodes': viewed_episodes,
                             'total_episodes': total_episodes,
-                            'watch_next': norm_title in wn_norm,
+                            'watch_next': (norm_title in wn_norm) or (item.ratingKey and str(item.ratingKey).lower() in wn_norm),
                             'poster_url': item.thumbUrl if hasattr(item, 'thumbUrl') else ""
                         })
 
@@ -187,7 +191,12 @@ def check_watchlist(watchlist, local_guids, local_titles, watch_next_titles):
     """Compares watchlist items against local server library to find missing files."""
     missing_items = []
     total_checked = 0
-    wn_norm = {normalize_title(t) for t in watch_next_titles}
+    
+    wn_norm = set()
+    for t in watch_next_titles:
+        t_str = str(t).strip()
+        wn_norm.add(t_str.lower())
+        wn_norm.add(normalize_title(t_str))
 
     for item in watchlist:
         total_checked += 1
@@ -253,7 +262,7 @@ def check_watchlist(watchlist, local_guids, local_titles, watch_next_titles):
                 'ratingKey': rating_key,
                 'guid': item.guid,
                 'added_at': watchlisted_date,
-                'watch_next': normalize_title(item.title) in wn_norm,
+                'watch_next': (normalize_title(item.title) in wn_norm) or (rating_key and str(rating_key).lower() in wn_norm),
                 'poster_url': poster_url
             })
 
@@ -321,11 +330,18 @@ def check_unwatched_not_watchlist(unwatched_local_items, wl_guids, wl_titles, ma
             
     return unwatched_not_watchlist
 
-def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None, local_episodes_inventory=None):
+def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None, local_episodes_inventory=None, watch_next_titles=None):
     """Integrates TVmaze API to trace next available/missing/upcoming episodes of TV shows."""
     tv_schedule_list = []
     today = datetime.date.today()
     
+    wn_norm = set()
+    if watch_next_titles:
+        for t in watch_next_titles:
+            t_str = str(t).strip()
+            wn_norm.add(t_str.lower())
+            wn_norm.add(normalize_title(t_str))
+
     for show in in_progress_shows:
         title = show['title']
         last_watched = show['last_watched']
@@ -460,17 +476,25 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None, 
                 'status': status,
                 'status_label': status_label,
                 'plex_link': plex_link,
-                'next_episode': next_ep_metadata
+                'next_episode': next_ep_metadata,
+                'watch_next': (normalize_title(title) in wn_norm) or (show['ratingKey'] and str(show['ratingKey']).lower() in wn_norm)
             })
             
     return tv_schedule_list
 
-def calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm=None):
+def calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm=None, watch_next_titles=None):
     """Loads sagas.json and determines completion stats and next available/missing movies."""
     sagas_data = load_sagas()
     active_sagas = []
     all_sagas_progress = []
     
+    wn_norm = set()
+    if watch_next_titles:
+        for t in watch_next_titles:
+            t_str = str(t).strip()
+            wn_norm.add(t_str.lower())
+            wn_norm.add(normalize_title(t_str))
+
     for saga_name, movie_list in sagas_data.items():
         total_movies = len(movie_list)
         watched_count = 0
@@ -490,13 +514,11 @@ def calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm=None):
                         lib_item = candidate
                         if candidate['isPlayed']:
                             movie_watched = True
-                            break
-                            
-            if movie_in_library:
-                present_count += 1
+                        break
+            
             if movie_watched:
                 watched_count += 1
-            elif next_movie is None:
+            elif not next_movie:
                 next_movie = {
                     'title': movie_title,
                     'index': idx + 1,
@@ -532,7 +554,8 @@ def calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm=None):
                     'next_movie': {
                         'title': next_movie['title'],
                         'index': next_movie['index']
-                    }
+                    },
+                    'watch_next': normalize_title(saga_name) in wn_norm
                 })
             
     return active_sagas, all_sagas_progress
@@ -660,12 +683,12 @@ async def get_dashboard_data(account, server_resource, watch_next_titles, ignore
     
     # 7. Trace TV Show next schedules
     tv_schedules = await asyncio.to_thread(
-        calculate_tv_show_schedules, in_progress_shows, machine_id, tvmaze_map, local_episodes_inventory
+        calculate_tv_show_schedules, in_progress_shows, machine_id, tvmaze_map, local_episodes_inventory, watch_next_titles
     )
     
     # 8. Calculate Movie Sagas progress (filtered to watchlist movies)
     active_sagas, sagas_progress = await asyncio.to_thread(
-        calculate_movie_sagas, local_titles, machine_id, watchlist_movies_norm
+        calculate_movie_sagas, local_titles, machine_id, watchlist_movies_norm, watch_next_titles
     )
     
     # 9. Combine continue watching queues

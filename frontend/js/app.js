@@ -433,7 +433,7 @@ function filterAndRender() {
                         <div class="status-badge ${item.status}">${item.status_label}</div>
                     `;
                 }
-            } else if (activeTab === 'missing' || activeTab === 'watchnext' || activeTab === 'unwatched') {
+            } else if (activeTab === 'continue' || activeTab === 'missing' || activeTab === 'watchnext' || activeTab === 'unwatched') {
                 showQueueBtn = true;
                 if (item.type === 'show') showIgnoreBtn = true;
 
