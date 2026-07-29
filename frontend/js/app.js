@@ -375,6 +375,10 @@ function filterAndRender() {
         }
     } else {
         emptyState.style.display = 'none';
+        
+        const activeCards = [];
+        const upcomingCards = [];
+        
         filtered.forEach(item => {
             const card = document.createElement('div');
             card.className = 'card';
@@ -399,39 +403,57 @@ function filterAndRender() {
                 if (isSaga) {
                     const percentage = Math.round((item.viewed_episodes / item.total_episodes) * 100);
                     primaryLink = item.plex_link;
-                    primaryBtnText = item.status === 'available' ? 'Watch Now' : 'Plex Info';
-
+                    primaryBtnText = 'Watch';
+                    
                     metaInfoHTML = `
                         <div class="card-meta">
-                            <span class="year">Next Film</span>
+                            <span class="year">Chronological order</span>
                         </div>
                         <div class="progress-container">
                             <div class="progress-bar">
                                 <div class="progress-fill" style="width: ${percentage}%;"></div>
                             </div>
-                            <span class="progress-text">Saga Progress: ${item.viewed_episodes} of ${item.total_episodes} films watched (${percentage}%)</span>
+                            <span class="progress-text">${item.viewed_episodes} of ${item.total_episodes} films watched (${percentage}%)</span>
                         </div>
                         <div class="status-badge ${item.status}">${item.status_label}</div>
                     `;
                 } else {
-                    showIgnoreBtn = true;
                     const percentage = Math.round((item.viewed_episodes / item.total_episodes) * 100);
-                    primaryLink = item.plex_link || `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=${item.next_episode ? item.next_episode.ratingKey || item.next_episode.title : ''}`;
-                    primaryBtnText = item.status === 'available' ? 'Play S' + item.next_episode.season + 'E' + item.next_episode.episode : 'Info';
-
-                    const epTitle = item.next_episode ? `"${item.next_episode.title}"` : 'TBA';
-                    metaInfoHTML = `
-                        <div class="card-meta">
-                            <span class="year">${epTitle}</span>
-                        </div>
-                        <div class="progress-container">
-                            <div class="progress-bar">
-                                <div class="progress-fill" style="width: ${percentage}%;"></div>
+                    primaryLink = item.plex_link;
+                    primaryBtnText = 'Plex Link';
+                    showQueueBtn = true;
+                    showIgnoreBtn = true;
+                    
+                    if (item.next_episode) {
+                        const ep = item.next_episode;
+                        const epTitle = ep.title ? `S${ep.season.toString().padStart(2, '0')}E${ep.episode.toString().padStart(2, '0')} - ${ep.title}` : `Season ${ep.season.toString().padStart(2, '0')} Episode ${ep.episode.toString().padStart(2, '0')}`;
+                        
+                        metaInfoHTML = `
+                            <div class="card-meta">
+                                <span class="year">${epTitle}</span>
                             </div>
-                            <span class="progress-text">${item.viewed_episodes} of ${item.total_episodes} episodes watched (${percentage}%)</span>
-                        </div>
-                        <div class="status-badge ${item.status}">${item.status_label}</div>
-                    `;
+                            <div class="progress-container">
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: ${percentage}%;"></div>
+                                </div>
+                                <span class="progress-text">${item.viewed_episodes} of ${item.total_episodes} episodes watched (${percentage}%)</span>
+                            </div>
+                            <div class="status-badge ${item.status}">${item.status_label}</div>
+                        `;
+                    } else {
+                        metaInfoHTML = `
+                            <div class="card-meta">
+                                <span class="year">${item.year || 'N/A'}</span>
+                            </div>
+                            <div class="progress-container">
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: ${percentage}%;"></div>
+                                </div>
+                                <span class="progress-text">${item.viewed_episodes} of ${item.total_episodes} episodes watched (${percentage}%)</span>
+                            </div>
+                            <div class="status-badge ${item.status}">${item.status_label}</div>
+                        `;
+                    }
                 }
             } else if (activeTab === 'continue' || activeTab === 'missing' || activeTab === 'watchnext' || activeTab === 'unwatched') {
                 showQueueBtn = true;
@@ -444,40 +466,47 @@ function filterAndRender() {
                     metaInfoHTML = `
                         <div class="card-meta">
                             <span class="year">${item.year || 'N/A'}</span>
-                            <span class="dot">•</span>
-                            <span class="added-date">Added ${item.added_at}</span>
+                        </div>
+                        <div class="progress-container">
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: 0%;"></div>
+                            </div>
+                            <span class="progress-text">0 of ${item.total_episodes || 'N/A'} watched (0%)</span>
                         </div>
                         <div class="status-badge missing">Missing from server</div>
                     `;
-                } else {
-                    primaryLink = item.plex_link || `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F${item.ratingKey}`;
-                    primaryBtnText = item.plex_link ? 'Watch Now' : 'Plex Info';
-
-                    if (item.type === 'movie') {
-                        const watchlistStar = item.in_watchlist ? `<span class="watchlist-star" style="color: #ffb700; font-weight: bold; margin-left: 6px;" title="In Watchlist">★ Watchlist</span>` : '';
-                        metaInfoHTML = `
-                            <div class="card-meta">
-                                <span class="year">${item.year || 'N/A'}</span>
-                                ${watchlistStar}
+                } else if (activeTab === 'unwatched') {
+                    primaryLink = `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F${item.ratingKey}`;
+                    primaryBtnText = 'Plex Info';
+                    
+                    metaInfoHTML = `
+                        <div class="card-meta">
+                            <span class="year">${item.year || 'N/A'}</span>
+                        </div>
+                        <div class="progress-container">
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: 0%;"></div>
                             </div>
-                            <div class="status-badge available">Unwatched Movie</div>
-                        `;
-                    } else {
-                        const percentage = Math.round((item.viewed_episodes / item.total_episodes) * 100);
-                        const watchlistStar = item.in_watchlist ? `<span class="watchlist-star" style="color: #ffb700; font-weight: bold; margin-left: 6px;" title="In Watchlist">★ Watchlist</span>` : '';
-                        metaInfoHTML = `
-                            <div class="card-meta">
-                                <span class="year">${item.year || 'N/A'}</span>
-                                ${watchlistStar}
+                            <span class="progress-text">0 of ${item.total_episodes || 'N/A'} watched (0%)</span>
+                        </div>
+                        <div class="status-badge unwatched">Unwatched Library Item</div>
+                    `;
+                } else if (activeTab === 'watchnext') {
+                    primaryLink = `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F${item.ratingKey}`;
+                    primaryBtnText = 'Plex Info';
+                    
+                    metaInfoHTML = `
+                        <div class="card-meta">
+                            <span class="year">${item.year || 'N/A'}</span>
+                        </div>
+                        <div class="progress-container">
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: 0%;"></div>
                             </div>
-                            <div class="progress-container">
-                                <div class="progress-bar">
-                                    <div class="progress-fill" style="width: ${percentage}%;"></div>
-                                </div>
-                                <span class="progress-text">${item.viewed_episodes} of ${item.total_episodes} episodes watched (${percentage}%)</span>
-                            </div>
-                        `;
-                    }
+                            <span class="progress-text">0 of ${item.total_episodes || 'N/A'} watched (0%)</span>
+                        </div>
+                        <div class="status-badge watchnext">Pinned to Watch Next</div>
+                    `;
                 }
             } else if (activeTab === 'sagas') {
                 showIgnoreBtn = true;
@@ -514,7 +543,7 @@ function filterAndRender() {
 
             let secondaryActionHTML = '';
             if (showIgnoreBtn) {
-                secondaryActionHTML = `<button class="btn btn-ignore" onclick="ignoreShow('${item.ratingKey}', '${item.title.replace(/'/g, "\\'")}')">Ignore</button>`;
+                secondaryActionHTML = `<button class="btn btn-ignore" onclick="ignoreShow('${item.ratingKey || ''}', '${item.title.replace(/'/g, "\\'")}')">Ignore</button>`;
             } else {
                 const discLink = `https://app.plex.tv/desktop/#!/provider/tv.plex.provider.discover/details?key=%2Flibrary%2Fmetadata%2F${item.guid ? item.guid.split('/').pop() : ''}`;
                 secondaryActionHTML = `<a href="${discLink}" target="_blank" class="btn btn-secondary">Discover</a>`;
@@ -545,8 +574,44 @@ function filterAndRender() {
                     </div>
                 </div>
             `;
-            grid.appendChild(card);
+
+            if (activeTab === 'continue' && item.status === 'new_season_upcoming') {
+                upcomingCards.push(card);
+            } else {
+                activeCards.push(card);
+            }
         });
+
+        grid.classList.add('grid');
+
+        if (activeTab === 'continue' && upcomingCards.length > 0) {
+            grid.classList.remove('grid');
+
+            if (activeCards.length > 0) {
+                const section = document.createElement('div');
+                section.className = 'continue-section';
+                section.innerHTML = `<h2 class="section-title">📺 Currently Watching &amp; Active Progress</h2>`;
+                const subGrid = document.createElement('div');
+                subGrid.className = 'grid';
+                activeCards.forEach(c => subGrid.appendChild(c));
+                section.appendChild(subGrid);
+                grid.appendChild(section);
+            }
+
+            if (upcomingCards.length > 0) {
+                const section = document.createElement('div');
+                section.className = 'continue-section';
+                section.innerHTML = `<h2 class="section-title">🚀 Upcoming New Seasons</h2>`;
+                const subGrid = document.createElement('div');
+                subGrid.className = 'grid';
+                upcomingCards.forEach(c => subGrid.appendChild(c));
+                section.appendChild(subGrid);
+                grid.appendChild(section);
+            }
+        } else {
+            activeCards.forEach(c => grid.appendChild(c));
+            upcomingCards.forEach(c => grid.appendChild(c));
+        }
     }
 }
 
