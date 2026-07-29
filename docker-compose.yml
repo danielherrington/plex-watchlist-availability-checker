@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  plex-media-hub:
+    build: .
+    container_name: plex-media-hub
+    ports:
+      - "8085:8085"
+    volumes:
+      - ./.plex_config.json:/app/.plex_config.json
+      - ./watch_next.json:/app/watch_next.json
+      - ./ignored_shows.json:/app/ignored_shows.json
+      - ./sagas.json:/app/sagas.json
+      - ./.tvmaze_cache.json:/app/.tvmaze_cache.json
+    restart: unless-stopped
