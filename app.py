@@ -6,7 +6,7 @@ import uvicorn
 def open_browser():
     """Waits for the web server to start up, then opens the dashboard in the default browser."""
     time.sleep(1.5)
-    url = "http://127.0.0.1:8000"
+    url = "http://127.0.0.1:8085"
     print(f"\nOpening dashboard: {url}")
     try:
         webbrowser.open(url)
@@ -24,4 +24,4 @@ if __name__ == "__main__":
     threading.Thread(target=open_browser, daemon=True).start()
     
     # Run the Uvicorn ASGI server
-    uvicorn.run("server:app", host="127.0.0.1", port=8000, log_level="info")
+    uvicorn.run("server:app", host="127.0.0.1", port=8085, log_level="info")
