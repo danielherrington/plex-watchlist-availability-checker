@@ -85,8 +85,6 @@ def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm
                     
                     if norm_title in ignored_shows_norm:
                         continue
-                    if watchlist_shows_norm is not None and norm_title not in watchlist_shows_norm:
-                        continue
 
                     if item.guid:
                         local_guids.add(item.guid.lower())
@@ -106,29 +104,30 @@ def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm
                             'poster_url': item.thumbUrl if hasattr(item, 'thumbUrl') else ""
                         })
 
-                    # Fetch local episodes inventory
-                    episodes = []
-                    try:
-                        episodes = item.episodes()
-                        episodes = sorted(episodes, key=lambda x: (x.parentIndex or 0, x.index or 0))
-                        local_episodes_inventory[norm_title] = [
-                            {
-                                'season': ep.parentIndex if ep.parentIndex is not None else 0,
-                                'episode': ep.index if ep.index is not None else 0,
-                                'ratingKey': ep.ratingKey,
-                                'air_date': ep.originallyAvailableAt.strftime('%Y-%m-%d') if ep.originallyAvailableAt else None,
-                                'title': ep.title
-                            }
-                            for ep in episodes
-                        ]
-                    except Exception as e:
-                        print(f"    Warning: Failed to fetch episodes for {item.title}: {e}")
-
                     total_episodes = getattr(item, 'leafCount', 0)
                     local_viewed = getattr(item, 'viewedLeafCount', 0)
                     global_viewed = watchlist_progress.get(norm_title, 0) if watchlist_progress else 0
                     viewed_episodes = max(local_viewed, global_viewed)
                     unwatched_count = getattr(item, 'unwatchedLeafCount', 0)
+
+                    # Fetch local episodes inventory ONLY if the show is in progress and has unwatched episodes
+                    episodes = []
+                    if viewed_episodes > 0 and unwatched_count > 0:
+                        try:
+                            episodes = item.episodes()
+                            episodes = sorted(episodes, key=lambda x: (x.parentIndex or 0, x.index or 0))
+                            local_episodes_inventory[norm_title] = [
+                                {
+                                    'season': ep.parentIndex if ep.parentIndex is not None else 0,
+                                    'episode': ep.index if ep.index is not None else 0,
+                                    'ratingKey': ep.ratingKey,
+                                    'air_date': ep.originallyAvailableAt.strftime('%Y-%m-%d') if ep.originallyAvailableAt else None,
+                                    'title': ep.title
+                                }
+                                for ep in episodes
+                            ]
+                        except Exception as e:
+                            print(f"    Warning: Failed to fetch episodes for {item.title}: {e}")
 
                     if unwatched_count > 0 and viewed_episodes == 0:
                         unwatched_local_items.append({
