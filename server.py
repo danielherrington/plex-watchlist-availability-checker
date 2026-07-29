@@ -6,31 +6,36 @@ from typing import Optional
 
 from config_manager import (
     load_watch_next, save_watch_next,
-    load_ignored_shows, save_ignored_shows
+    load_ignored_shows, save_ignored_shows,
+    global_plex_cache
 )
 from plex_client import authenticate_plex, select_server
 from processor import get_dashboard_data, normalize_title, sync_watch_next_to_plex
 
 app = FastAPI(title="Plex Media Hub API Server")
 
+# Global syncing state
+is_syncing = False
+
 class ItemPayload(BaseModel):
     ratingKey: Optional[str] = None
     title: Optional[str] = None
 
 @app.get("/api/dashboard")
-def api_dashboard():
+async def api_dashboard():
     try:
+        import asyncio
         # Load active queues and ignore lists
         watch_next_titles = load_watch_next()
         ignored_shows = load_ignored_shows()
         ignored_shows_norm = {normalize_title(t) for t in ignored_shows}
         
         # Authenticate & select active server
-        account = authenticate_plex()
-        server_resource = select_server(account)
+        account = await asyncio.to_thread(authenticate_plex)
+        server_resource = await asyncio.to_thread(select_server, account)
         
         # Process and generate the analytics dashboard payload
-        data = get_dashboard_data(account, server_resource, watch_next_titles, ignored_shows_norm)
+        data = await get_dashboard_data(account, server_resource, watch_next_titles, ignored_shows_norm)
         
         # Append ignored shows config list
         data['ignored_shows'] = ignored_shows
@@ -39,7 +44,7 @@ def api_dashboard():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/ignore")
-def api_ignore(payload: ItemPayload):
+async def api_ignore(payload: ItemPayload):
     ignored = load_ignored_shows()
     key = payload.title or payload.ratingKey
     if key:
@@ -47,41 +52,65 @@ def api_ignore(payload: ItemPayload):
         if key_lower not in [x.lower() for x in ignored]:
             ignored.append(key)
             save_ignored_shows(ignored)
+            global_plex_cache.clear()
+    return {"status": "ok"}
+
+@app.post("/api/unignore")
+async def api_unignore(payload: ItemPayload):
+    ignored = load_ignored_shows()
+    key = payload.title or payload.ratingKey
+    if key:
+        key_lower = key.lower()
+        ignored = [x for x in ignored if x.lower() != key_lower]
+        save_ignored_shows(ignored)
+        global_plex_cache.clear()
     return {"status": "ok"}
 
 @app.post("/api/unignore_all")
-def api_unignore_all():
+async def api_unignore_all():
     save_ignored_shows([])
+    global_plex_cache.clear()
     return {"status": "ok"}
 
 def run_background_sync(queue):
     """Asynchronous background wrapper for Plex playlist sync."""
+    global is_syncing
+    is_syncing = True
     try:
         account = authenticate_plex()
         server_resource = select_server(account)
         sync_watch_next_to_plex(server_resource, queue)
     except Exception as e:
         print(f"Background sync error: {e}")
+    finally:
+        is_syncing = False
+
+@app.get("/api/sync_status")
+async def api_sync_status():
+    global is_syncing
+    return {"is_syncing": is_syncing}
 
 @app.post("/api/queue")
-def api_queue(payload: ItemPayload, background_tasks: BackgroundTasks):
+async def api_queue(payload: ItemPayload, background_tasks: BackgroundTasks):
     queue = load_watch_next()
     key = payload.ratingKey or payload.title
     if key:
         if key not in queue:
             queue.append(key)
             save_watch_next(queue)
+            global_plex_cache.clear()
             # Run Plex sync in the background
             background_tasks.add_task(run_background_sync, queue)
     return {"status": "ok"}
 
 @app.post("/api/unqueue")
-def api_unqueue(payload: ItemPayload, background_tasks: BackgroundTasks):
+async def api_unqueue(payload: ItemPayload, background_tasks: BackgroundTasks):
     queue = load_watch_next()
     key = payload.ratingKey or payload.title
     if key and key in queue:
         queue.remove(key)
         save_watch_next(queue)
+        global_plex_cache.clear()
         # Run Plex sync in the background
         background_tasks.add_task(run_background_sync, queue)
     return {"status": "ok"}

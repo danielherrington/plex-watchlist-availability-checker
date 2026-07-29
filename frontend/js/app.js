@@ -8,6 +8,8 @@ let activeTab = 'continue';
 let currentFilter = 'all';
 let currentSort = 'title-asc';
 
+let syncPollingInterval = null;
+
 async function loadDashboard() {
     try {
         const response = await fetch('/api/dashboard');
@@ -23,6 +25,7 @@ async function loadDashboard() {
         
         updateCounts();
         filterAndRender();
+        checkSyncStatus();
     } catch (error) {
         console.error('Error loading dashboard:', error);
         document.getElementById('server-name-label').textContent = 'Connection Error';
@@ -58,23 +61,68 @@ async function ignoreShow(ratingKey, title) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ratingKey: ratingKey, title: title })
         });
+        showToast(`Ignored show: ${title || ratingKey}`);
     } catch (e) {
         console.error('Failed to sync ignore with backend:', e);
     }
 }
 
-async function clearIgnored() {
-    ignoredBackend = [];
+async function unignoreShow(showName) {
+    const key = showName.toLowerCase();
+    ignoredBackend = ignoredBackend.filter(x => x.toLowerCase() !== key);
+    
     updateCounts();
     filterAndRender();
+    renderIgnoredList();
     
     try {
-        await fetch('/api/unignore_all', { method: 'POST' });
+        await fetch('/api/unignore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: showName })
+        });
+        showToast(`Restored show: ${showName}`);
         loadDashboard();
     } catch (e) {
-        console.error('Failed to clear ignores on backend:', e);
+        console.error('Failed to unignore show:', e);
     }
 }
+
+function openIgnoredModal() {
+    const modal = document.getElementById('ignored-modal');
+    modal.classList.add('show');
+    renderIgnoredList();
+}
+
+function closeIgnoredModal() {
+    const modal = document.getElementById('ignored-modal');
+    modal.classList.remove('show');
+}
+
+function renderIgnoredList() {
+    const container = document.getElementById('ignored-list-container');
+    if (!container) return;
+    
+    if (ignoredBackend.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-secondary); text-align: center; padding: 1.5rem 0;">No ignored shows.</p>';
+        return;
+    }
+    
+    container.innerHTML = ignoredBackend.map(show => `
+        <div class="ignored-item-row">
+            <span class="ignored-item-name">${show}</span>
+            <button class="unignore-btn" onclick="unignoreShow('${show.replace(/'/g, "\\'")}')">Remove</button>
+        </div>
+    `).join('');
+}
+
+// Close modal if clicking outside the content
+window.addEventListener('click', (e) => {
+    const modal = document.getElementById('ignored-modal');
+    if (e.target === modal) {
+        closeIgnoredModal();
+    }
+});
 
 async function toggleQueue(ratingKey, title) {
     let target = null;
@@ -94,15 +142,73 @@ async function toggleQueue(ratingKey, title) {
     
     if (target) {
         const endpoint = target.watch_next ? '/api/queue' : '/api/unqueue';
+        const actionWord = target.watch_next ? 'Queued' : 'Dequeued';
+        showToast(`${actionWord}: ${target.title}`);
         try {
             await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ratingKey: ratingKey, title: title })
             });
+            startSyncStatusPolling();
         } catch (e) {
             console.error('Failed to sync queue with backend:', e);
         }
+    }
+}
+
+// Toast notification helper
+function showToast(message) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.innerHTML = `
+        <span style="font-size: 1.1rem;">🔔</span>
+        <span style="font-weight: 500; font-size: 0.95rem; line-height: 1.4;">${message}</span>
+    `;
+    
+    container.appendChild(toast);
+    
+    // Auto-remove toast from DOM after animation completes
+    setTimeout(() => {
+        toast.remove();
+    }, 5000);
+}
+
+// Poll sync state
+function startSyncStatusPolling() {
+    if (syncPollingInterval) clearInterval(syncPollingInterval);
+    document.getElementById('sync-badge').style.display = 'inline-flex';
+    
+    syncPollingInterval = setInterval(checkSyncStatus, 2000);
+}
+
+async function checkSyncStatus() {
+    try {
+        const r = await fetch('/api/sync_status');
+        const d = await r.json();
+        const badge = document.getElementById('sync-badge');
+        
+        if (d.is_syncing) {
+            badge.style.display = 'inline-flex';
+            if (!syncPollingInterval) {
+                syncPollingInterval = setInterval(checkSyncStatus, 2000);
+            }
+        } else {
+            if (badge.style.display !== 'none') {
+                badge.style.display = 'none';
+                showToast('Watch Next Playlist Synced to Plex Server');
+                loadDashboard();
+            }
+            if (syncPollingInterval) {
+                clearInterval(syncPollingInterval);
+                syncPollingInterval = null;
+            }
+        }
+    } catch (e) {
+        console.error('Failed to check sync status:', e);
     }
 }
 

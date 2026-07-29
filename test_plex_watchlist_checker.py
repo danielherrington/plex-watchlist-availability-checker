@@ -182,5 +182,27 @@ class TestPlexWatchlistChecker(unittest.TestCase):
         self.assertEqual(tv_schedules[0]['next_episode']['season'], 1)
         self.assertEqual(tv_schedules[0]['next_episode']['episode'], 2)
 
+class TestPlexMemoryCache(unittest.TestCase):
+    def test_cache_set_and_get(self):
+        from config_manager import PlexMemoryCache
+        import time
+        
+        cache = PlexMemoryCache(ttl=1)
+        cache.set("key1", "val1")
+        self.assertEqual(cache.get("key1"), "val1")
+        
+        # Test expiration
+        time.sleep(1.1)
+        self.assertIsNone(cache.get("key1"))
+
+    def test_cache_clear(self):
+        from config_manager import PlexMemoryCache
+        cache = PlexMemoryCache(ttl=60)
+        cache.set("key1", "val1")
+        cache.set("key2", "val2")
+        cache.clear()
+        self.assertIsNone(cache.get("key1"))
+        self.assertIsNone(cache.get("key2"))
+
 if __name__ == '__main__':
     unittest.main()

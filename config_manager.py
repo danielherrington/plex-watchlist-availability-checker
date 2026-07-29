@@ -94,3 +94,35 @@ def save_tvmaze_cache(cache):
             json.dump(cache, f, indent=4)
     except Exception as e:
         print(f"Warning: Failed to save tvmaze cache: {e}")
+
+import time
+import threading
+
+class PlexMemoryCache:
+    def __init__(self, ttl=300):
+        self.ttl = ttl
+        self.cache = {}
+        self.lock = threading.Lock()
+
+    def get(self, key):
+        with self.lock:
+            if key in self.cache:
+                entry = self.cache[key]
+                if time.time() - entry['timestamp'] < self.ttl:
+                    return entry['data']
+                else:
+                    del self.cache[key]
+            return None
+
+    def set(self, key, data):
+        with self.lock:
+            self.cache[key] = {
+                'timestamp': time.time(),
+                'data': data
+            }
+
+    def clear(self):
+        with self.lock:
+            self.cache.clear()
+
+global_plex_cache = PlexMemoryCache(ttl=300)

@@ -537,49 +537,77 @@ def calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm=None):
             
     return active_sagas, all_sagas_progress
 
-def get_accurate_viewed_count(rating_key, token, fallback_viewed):
-    """Queries Plex metadata server children API to calculate true viewed leaf count from season user states."""
-    import urllib.request
+async def async_get_accurate_viewed_count(client, rating_key, token, fallback_viewed):
+    """Queries Plex metadata server children API to calculate true viewed leaf count from season user states (asynchronously)."""
     import xml.etree.ElementTree as ET
     if not rating_key or rating_key == "nan":
         return fallback_viewed
         
     try:
         url = f"https://metadata.provider.plex.tv/library/metadata/{rating_key}/children?X-Plex-Token={token}&includeUserState=1"
-        req = urllib.request.Request(url, headers={'Accept': 'application/xml'})
-        with urllib.request.urlopen(req, timeout=5) as response:
-            xml_data = response.read()
-        root = ET.fromstring(xml_data)
-        total_viewed = 0
-        for directory in root.findall(".//Directory"):
-            total_viewed += int(directory.attrib.get('viewedLeafCount', 0))
-        return total_viewed
+        response = await client.get(url, timeout=5.0)
+        if response.status_code == 200:
+            root = ET.fromstring(response.content)
+            total_viewed = 0
+            for directory in root.findall(".//Directory"):
+                total_viewed += int(directory.attrib.get('viewedLeafCount', 0))
+            return total_viewed
     except Exception as e:
-        print(f"Warning: Failed to fetch accurate viewed count for show {rating_key}: {e}")
-        return fallback_viewed
+        print(f"Warning: Failed to fetch accurate viewed count for show {rating_key} (async): {e}")
+    return fallback_viewed
 
-def get_dashboard_data(account, server_resource, watch_next_titles, ignored_shows_norm, libtype=None):
+async def get_dashboard_data(account, server_resource, watch_next_titles, ignored_shows_norm, libtype=None):
     """Executes the complete core analytical flow and returns the compiled dashboard payload."""
-    # 1. Fetch watchlist first
-    watchlist = fetch_watchlist(account, libtype=libtype)
+    import asyncio
+    from config_manager import global_plex_cache
+    
+    cache_key = f"dashboard_{server_resource.name}_{libtype}"
+    cached_data = global_plex_cache.get(cache_key)
+    if cached_data is not None:
+        return cached_data
+
+    # 1. Fetch watchlist (utilizing cache to prevent Plex network hits)
+    watchlist_cache_key = f"watchlist_{account.username}_{libtype}"
+    watchlist = global_plex_cache.get(watchlist_cache_key)
+    if watchlist is None:
+        watchlist = await asyncio.to_thread(fetch_watchlist, account, libtype=libtype)
+        global_plex_cache.set(watchlist_cache_key, watchlist)
+
     watchlist_shows_norm = {normalize_title(item.title) for item in watchlist if item.type == 'show'}
     watchlist_movies_norm = {normalize_title(item.title) for item in watchlist if item.type == 'movie'}
 
-    # Track global progress from watchlist for local shows, query accurate count from season levels
+    # Track global progress from watchlist for local shows, query accurate count from season levels concurrently
     watchlist_progress = {}
-    for item in watchlist:
-        if item.type == 'show':
-            norm_title = normalize_title(item.title)
-            global_viewed = getattr(item, 'viewedLeafCount', 0)
-            if global_viewed > 0:
-                rating_key = item.guid.rsplit('/', 1)[-1] if item.guid else ""
-                global_viewed = get_accurate_viewed_count(rating_key, account.authToken, global_viewed)
-            watchlist_progress[norm_title] = global_viewed
+    import httpx
+    async with httpx.AsyncClient() as client:
+        tasks = []
+        item_keys = []
+        for item in watchlist:
+            if item.type == 'show':
+                norm_title = normalize_title(item.title)
+                global_viewed = getattr(item, 'viewedLeafCount', 0)
+                if global_viewed > 0:
+                    rating_key = item.guid.rsplit('/', 1)[-1] if item.guid else ""
+                    tasks.append(async_get_accurate_viewed_count(client, rating_key, account.authToken, global_viewed))
+                    item_keys.append((norm_title, global_viewed))
+                else:
+                    watchlist_progress[norm_title] = 0
 
-    # 2. Build local index (only scanning shows that are in the watchlist)
-    local_guids, local_titles, unwatched_local_items, in_progress_shows, local_episodes_inventory, machine_id = build_local_library_index(
-        server_resource, watch_next_titles, ignored_shows_norm, watchlist_shows_norm, watchlist_progress
-    )
+        if tasks:
+            results = await asyncio.gather(*tasks)
+            for (norm_title, _), val in zip(item_keys, results):
+                watchlist_progress[norm_title] = val
+
+    # 2. Build local index (only scanning shows that are in the watchlist) in a separate worker thread
+    local_index_cache_key = f"local_index_{server_resource.name}"
+    local_index = global_plex_cache.get(local_index_cache_key)
+    if local_index is None:
+        local_index = await asyncio.to_thread(
+            build_local_library_index, server_resource, watch_next_titles, ignored_shows_norm, watchlist_shows_norm, watchlist_progress
+        )
+        global_plex_cache.set(local_index_cache_key, local_index)
+
+    local_guids, local_titles, unwatched_local_items, in_progress_shows, local_episodes_inventory, machine_id = local_index
     
     # 3. Inject watchlist-only shows
     local_in_progress_titles = {normalize_title(s['title']) for s in in_progress_shows}
@@ -616,27 +644,34 @@ def get_dashboard_data(account, server_resource, watch_next_titles, ignored_show
 
     # 4. Pre-fetch TVmaze guides concurrently
     show_titles = [show['title'] for show in in_progress_shows]
-    tvmaze_map = fetch_tvmaze_batch(show_titles)
+    from tvmaze_client import async_fetch_tvmaze_batch
+    tvmaze_map = await async_fetch_tvmaze_batch(show_titles)
     
-    # 5. Find missing items
-    missing_items, total_watchlist = check_watchlist(watchlist, local_guids, local_titles, watch_next_titles)
+    # 5. Find missing items (run calculations in thread pool to prevent blocking)
+    missing_items, total_watchlist = await asyncio.to_thread(
+        check_watchlist, watchlist, local_guids, local_titles, watch_next_titles
+    )
     
     # 6. Find unwatched gaps
     wl_guids, wl_titles = index_watchlist(watchlist)
-    unwatched_local_gaps = check_unwatched_not_watchlist(unwatched_local_items, wl_guids, wl_titles, machine_id)
+    unwatched_local_gaps = await asyncio.to_thread(
+        check_unwatched_not_watchlist, unwatched_local_items, wl_guids, wl_titles, machine_id
+    )
     
     # 7. Trace TV Show next schedules
-    tv_schedules = calculate_tv_show_schedules(
-        in_progress_shows, machine_id, tvmaze_map=tvmaze_map, local_episodes_inventory=local_episodes_inventory
+    tv_schedules = await asyncio.to_thread(
+        calculate_tv_show_schedules, in_progress_shows, machine_id, tvmaze_map, local_episodes_inventory
     )
     
     # 8. Calculate Movie Sagas progress (filtered to watchlist movies)
-    active_sagas, sagas_progress = calculate_movie_sagas(local_titles, machine_id, watchlist_movies_norm)
+    active_sagas, sagas_progress = await asyncio.to_thread(
+        calculate_movie_sagas, local_titles, machine_id, watchlist_movies_norm
+    )
     
     # 9. Combine continue watching queues
     continue_watching = tv_schedules + active_sagas
     
-    return {
+    result = {
         'server_name': server_resource.name,
         'total_watchlist': total_watchlist,
         'continue_watching': continue_watching,
@@ -644,6 +679,9 @@ def get_dashboard_data(account, server_resource, watch_next_titles, ignored_show
         'unwatched_local_gaps': unwatched_local_gaps,
         'sagas_progress': sagas_progress
     }
+    
+    global_plex_cache.set(cache_key, result)
+    return result
 
 def sync_watch_next_to_plex(server_resource, watch_next_titles):
     """Syncs watch_next queue items to a Plex playlist in the correct order."""
