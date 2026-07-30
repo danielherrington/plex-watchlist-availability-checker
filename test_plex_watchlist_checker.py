@@ -182,6 +182,55 @@ class TestPlexWatchlistChecker(unittest.TestCase):
         self.assertEqual(tv_schedules[0]['next_episode']['season'], 1)
         self.assertEqual(tv_schedules[0]['next_episode']['episode'], 2)
 
+    @patch('processor.query_tvmaze')
+    def test_calculate_tv_show_schedules_out_of_order(self, mock_query_tvmaze):
+        # Mock TVmaze response with 4 episodes (2 in Season 1, 2 in Season 2)
+        mock_query_tvmaze.return_value = {
+            "_embedded": {
+                "episodes": [
+                    {"season": 1, "number": 1, "name": "S1E1", "airdate": "2026-07-01"},
+                    {"season": 1, "number": 2, "name": "S1E2", "airdate": "2026-07-05"},
+                    {"season": 2, "number": 1, "name": "S2E1", "airdate": "2026-07-10"},
+                    {"season": 2, "number": 2, "name": "S2E2", "airdate": "2026-07-15"}
+                ]
+            }
+        }
+        
+        # User has watched S1E1, but not S1E2. However, they watched S2E1!
+        in_progress_shows = [{
+            'title': 'Out Of Order Show',
+            'last_watched': None,
+            'next_ep_local': None,
+            'viewed_episodes': 2, # Counter says 2 watched, which linearly implies they watched S1E2 and are on S2E1
+            'total_episodes': 4,
+            'ratingKey': '2002',
+            'guid': 'plex://show/2002',
+            'poster_url': ''
+        }]
+        
+        local_episodes_inventory = {
+            "out of order show": [
+                {"season": 1, "episode": 1, "ratingKey": "101", "air_date": "2026-07-01", "title": "S1E1", "watched": True},
+                {"season": 1, "episode": 2, "ratingKey": "102", "air_date": "2026-07-05", "title": "S1E2", "watched": False},
+                {"season": 2, "episode": 1, "ratingKey": "201", "air_date": "2026-07-10", "title": "S2E1", "watched": True},
+                {"season": 2, "episode": 2, "ratingKey": "202", "air_date": "2026-07-15", "title": "S2E2", "watched": False}
+            ]
+        }
+        
+        # Run schedules check with inventory passed
+        tv_schedules = calculate_tv_show_schedules(
+            in_progress_shows, "mock_server_id", local_episodes_inventory=local_episodes_inventory
+        )
+        
+        self.assertEqual(len(tv_schedules), 1)
+        self.assertEqual(tv_schedules[0]['title'], "Out Of Order Show")
+        # Should resolve next episode to S1E2 because it is the first unwatched episode in order, NOT S2E1!
+        self.assertEqual(tv_schedules[0]['next_episode']['season'], 1)
+        self.assertEqual(tv_schedules[0]['next_episode']['episode'], 2)
+        # Should resolve as available because S1E2 is in the local inventory (watched: False)
+        self.assertEqual(tv_schedules[0]['status'], "available")
+        self.assertEqual(tv_schedules[0]['viewed_episodes'], 1) # Index of S1E2 in TVmaze is 1
+
 class TestPlexMemoryCache(unittest.TestCase):
     def test_cache_set_and_get(self):
         from config_manager import PlexMemoryCache

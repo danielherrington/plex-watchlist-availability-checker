@@ -122,7 +122,8 @@ def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm
                                     'episode': ep.index if ep.index is not None else 0,
                                     'ratingKey': ep.ratingKey,
                                     'air_date': ep.originallyAvailableAt.strftime('%Y-%m-%d') if ep.originallyAvailableAt else None,
-                                    'title': ep.title
+                                    'title': ep.title,
+                                    'watched': getattr(ep, 'isPlayed', False) or getattr(ep, 'viewCount', 0) > 0
                                 }
                                 for ep in episodes
                             ]
@@ -368,11 +369,37 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None, 
             episodes = sorted(episodes, key=lambda x: (x.get('season', 0), x.get('number', 0)))
             t_eps = len(episodes)
             
-            last_watched_season = episodes[v_count - 1].get('season', 1) if (v_count > 0 and v_count - 1 < len(episodes)) else 1
-            
+            # Determine next episode using local watched history if available
+            norm_title = normalize_title(title)
+            found_next_locally = False
+            last_watched_season = 1
             next_tvmaze_ep = None
-            if v_count < len(episodes):
-                next_tvmaze_ep = episodes[v_count]
+            
+            if local_episodes_inventory and norm_title in local_episodes_inventory:
+                local_eps = [le for le in local_episodes_inventory[norm_title] if le.get('season', 0) > 0]
+                local_eps = sorted(local_eps, key=lambda x: (x['season'], x['episode']))
+                
+                # Find first unwatched local episode
+                first_unwatched = None
+                for le in local_eps:
+                    if not le.get('watched', False):
+                        first_unwatched = le
+                        break
+                
+                if first_unwatched:
+                    # Find this episode in TVmaze
+                    for idx, ep in enumerate(episodes):
+                        if ep.get('season') == first_unwatched['season'] and ep.get('number') == first_unwatched['episode']:
+                            next_tvmaze_ep = ep
+                            v_count = idx
+                            last_watched_season = episodes[idx - 1].get('season', 1) if idx > 0 else 1
+                            found_next_locally = True
+                            break
+                            
+            if not found_next_locally:
+                last_watched_season = episodes[v_count - 1].get('season', 1) if (v_count > 0 and v_count - 1 < len(episodes)) else 1
+                if v_count < len(episodes):
+                    next_tvmaze_ep = episodes[v_count]
                 
             if next_tvmaze_ep:
                 ep_season = next_tvmaze_ep['season']
@@ -469,7 +496,7 @@ def calculate_tv_show_schedules(in_progress_shows, machine_id, tvmaze_map=None, 
                 'title': title,
                 'type': 'show',
                 'ratingKey': show['ratingKey'],
-                'viewed_episodes': show['viewed_episodes'],
+                'viewed_episodes': v_count,
                 'total_episodes': t_eps,
                 'poster_url': show['poster_url'],
                 'status': status,
