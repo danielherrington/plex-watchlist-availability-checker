@@ -108,7 +108,7 @@ def build_local_library_index(plex_server, watch_next_titles, ignored_shows_norm
                     local_viewed = getattr(item, 'viewedLeafCount', 0)
                     global_viewed = watchlist_progress.get(norm_title, 0) if watchlist_progress else 0
                     viewed_episodes = max(local_viewed, global_viewed)
-                    unwatched_count = getattr(item, 'unwatchedLeafCount', 0)
+                    unwatched_count = total_episodes - local_viewed
 
                     # Fetch local episodes inventory ONLY if the show is in progress and has unwatched episodes
                     episodes = []
